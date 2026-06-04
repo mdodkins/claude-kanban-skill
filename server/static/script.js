@@ -25,12 +25,12 @@ let editingId = null; // null while creating, card.id while editing
 // ===== API =====
 
 async function apiList() {
-  const res = await fetch('/api/cards');
+  const res = await fetch('api/cards');
   if (!res.ok) throw new Error('list failed');
   return res.json();
 }
 async function apiCreate(card) {
-  const res = await fetch('/api/cards', {
+  const res = await fetch('api/cards', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(card),
@@ -39,7 +39,7 @@ async function apiCreate(card) {
   return res.json();
 }
 async function apiUpdate(id, patch) {
-  const res = await fetch('/api/cards/' + encodeURIComponent(id), {
+  const res = await fetch('api/cards/' + encodeURIComponent(id), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
@@ -48,7 +48,7 @@ async function apiUpdate(id, patch) {
   return res.json();
 }
 async function apiDelete(id) {
-  const res = await fetch('/api/cards/' + encodeURIComponent(id), { method: 'DELETE' });
+  const res = await fetch('api/cards/' + encodeURIComponent(id), { method: 'DELETE' });
   if (!res.ok) throw new Error('delete failed: ' + res.status);
 }
 
