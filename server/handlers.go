@@ -11,6 +11,7 @@ import (
 // Routes:
 //
 //	GET    /api/agents        list agent names (for @-mention suggestions)
+//	GET    /api/tags          list all unique tags across cards (for #-mention suggestions)
 //	GET    /api/cards         list all cards
 //	POST   /api/cards         create
 //	PATCH  /api/cards/{id}    sparse update
@@ -29,6 +30,14 @@ func NewMux(b *Board, agents []string) http.Handler {
 			list = []string{}
 		}
 		writeJSON(w, http.StatusOK, list)
+	})
+	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		writeJSON(w, http.StatusOK, b.ListTags())
 	})
 	mux.HandleFunc("/api/cards", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

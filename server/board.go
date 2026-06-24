@@ -116,6 +116,24 @@ func (b *Board) ListCards() []Card {
 	return out
 }
 
+// ListTags returns a sorted slice of all unique tags across all cards.
+func (b *Board) ListTags() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	seen := map[string]struct{}{}
+	for i := range b.cards {
+		for _, t := range b.cards[i].Tags {
+			seen[t] = struct{}{}
+		}
+	}
+	tags := make([]string, 0, len(seen))
+	for t := range seen {
+		tags = append(tags, t)
+	}
+	sort.Strings(tags)
+	return tags
+}
+
 // AddCard creates a card on the board and persists. The new card is appended
 // to the end of its column (Position = current count in that column).
 func (b *Board) AddCard(title, description, column, color string, tags []string) (Card, error) {

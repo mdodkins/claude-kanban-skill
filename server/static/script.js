@@ -419,7 +419,7 @@ syncThemeButton();
 
 const suggestEl = document.getElementById('mention-suggestions');
 let agentsCache = null;
-let mentionState = null; // { textarea, atStart } while the dropdown is open
+let mentionState = null; // { textarea, atStart, trigger } while the dropdown is open
 
 async function loadAgents() {
   if (agentsCache !== null) return agentsCache;
@@ -430,17 +430,24 @@ async function loadAgents() {
   return agentsCache;
 }
 
-// Returns { query, atStart } if cursor is inside an @-word, else null.
-function mentionQueryAt(el) {
-  const before = el.value.slice(0, el.selectionStart);
-  const m = before.match(/@(\w*)$/);
-  return m ? { query: m[1], atStart: el.selectionStart - m[0].length } : null;
+async function loadTags() {
+  try {
+    const res = await fetch('api/tags');
+    return res.ok ? await res.json() : [];
+  } catch { return []; }
 }
 
-function applyMention(textarea, atStart, name) {
+// Returns { trigger, query, atStart } if cursor follows @ or #, else null.
+function mentionQueryAt(el) {
+  const before = el.value.slice(0, el.selectionStart);
+  const m = before.match(/[@#](\w*)$/);
+  return m ? { trigger: m[0][0], query: m[1], atStart: el.selectionStart - m[0].length } : null;
+}
+
+function applyMention(textarea, atStart, trigger, name) {
   const before = textarea.value.slice(0, atStart);
   const after = textarea.value.slice(textarea.selectionStart);
-  textarea.value = before + '@' + name + after;
+  textarea.value = before + trigger + name + after;
   const pos = atStart + 1 + name.length;
   textarea.selectionStart = textarea.selectionEnd = pos;
 }
@@ -451,25 +458,25 @@ function hideMentions() {
   mentionState = null;
 }
 
-function showMentions(textarea, agents, query, atStart) {
-  const filtered = agents.filter(a => a.toLowerCase().startsWith(query.toLowerCase()));
+function showMentions(textarea, names, query, atStart, trigger) {
+  const filtered = names.filter(n => n.toLowerCase().startsWith(query.toLowerCase()));
   if (!filtered.length) { hideMentions(); return; }
 
-  mentionState = { textarea, atStart };
+  mentionState = { textarea, atStart, trigger };
   suggestEl.innerHTML = '';
   for (const name of filtered) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'mention-item';
     btn.dataset.name = name;
-    const at = document.createElement('span');
-    at.className = 'mention-at';
-    at.textContent = '@';
-    btn.appendChild(at);
+    const sigil = document.createElement('span');
+    sigil.className = 'mention-at';
+    sigil.textContent = trigger;
+    btn.appendChild(sigil);
     btn.appendChild(document.createTextNode(name));
     btn.addEventListener('mousedown', e => {
       e.preventDefault(); // keep textarea focused
-      applyMention(textarea, atStart, name);
+      applyMention(textarea, atStart, trigger, name);
       hideMentions();
     });
     suggestEl.appendChild(btn);
@@ -494,9 +501,9 @@ function moveMentionActive(delta) {
 async function onDescInput() {
   const hit = mentionQueryAt(descEl);
   if (!hit) { hideMentions(); return; }
-  const agents = await loadAgents();
-  if (!agents.length) return;
-  showMentions(descEl, agents, hit.query, hit.atStart);
+  const names = hit.trigger === '@' ? await loadAgents() : await loadTags();
+  if (!names.length) { hideMentions(); return; }
+  showMentions(descEl, names, hit.query, hit.atStart, hit.trigger);
 }
 
 function onDescKeydown(e) {
@@ -508,7 +515,7 @@ function onDescKeydown(e) {
     const active = suggestEl.querySelector('.mention-item.active');
     if (active) {
       e.preventDefault();
-      applyMention(mentionState.textarea, mentionState.atStart, active.dataset.name);
+      applyMention(mentionState.textarea, mentionState.atStart, mentionState.trigger, active.dataset.name);
       hideMentions();
     }
   }
