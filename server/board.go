@@ -23,7 +23,6 @@ type Card struct {
 	// left-border + tinted background. Empty string = no colour.
 	// Allowed values are validated by the API layer (see handlers.go).
 	Color       string       `json:"color,omitempty"`
-	Tags        []string     `json:"tags,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
@@ -126,27 +125,9 @@ func (b *Board) ListCards() []Card {
 	return out
 }
 
-// ListTags returns a sorted slice of all unique tags across all cards.
-func (b *Board) ListTags() []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	seen := map[string]struct{}{}
-	for i := range b.cards {
-		for _, t := range b.cards[i].Tags {
-			seen[t] = struct{}{}
-		}
-	}
-	tags := make([]string, 0, len(seen))
-	for t := range seen {
-		tags = append(tags, t)
-	}
-	sort.Strings(tags)
-	return tags
-}
-
 // AddCard creates a card on the board and persists. The new card is appended
 // to the end of its column (Position = current count in that column).
-func (b *Board) AddCard(title, description, column, color string, tags []string) (Card, error) {
+func (b *Board) AddCard(title, description, column, color string) (Card, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	pos := 0
@@ -162,7 +143,6 @@ func (b *Board) AddCard(title, description, column, color string, tags []string)
 		Column:      column,
 		Position:    pos,
 		Color:       color,
-		Tags:        tags,
 	}
 	b.cards = append(b.cards, c)
 	if err := b.save(); err != nil {
@@ -176,12 +156,11 @@ func (b *Board) AddCard(title, description, column, color string, tags []string)
 // CardUpdate is a sparse update: any non-nil field is applied to the card,
 // nil fields are left alone.
 type CardUpdate struct {
-	Title       *string   `json:"title,omitempty"`
-	Description *string   `json:"description,omitempty"`
-	Column      *string   `json:"column,omitempty"`
-	Position    *int      `json:"position,omitempty"`
-	Color       *string   `json:"color,omitempty"`
-	Tags        *[]string `json:"tags,omitempty"`
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Column      *string `json:"column,omitempty"`
+	Position    *int    `json:"position,omitempty"`
+	Color       *string `json:"color,omitempty"`
 }
 
 // ErrCardNotFound is returned when a card ID doesn't exist on the board.
@@ -214,9 +193,6 @@ func (b *Board) UpdateCard(id string, u CardUpdate) (Card, error) {
 	}
 	if u.Color != nil {
 		b.cards[idx].Color = *u.Color
-	}
-	if u.Tags != nil {
-		b.cards[idx].Tags = *u.Tags
 	}
 	if u.Column != nil || u.Position != nil {
 		targetColumn := b.cards[idx].Column

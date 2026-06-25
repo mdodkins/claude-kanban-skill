@@ -25,7 +25,7 @@ func TestNewBoardOnMissingFileStartsEmpty(t *testing.T) {
 
 func TestAddCardAppearsInListCards(t *testing.T) {
 	b := freshBoard(t)
-	c, _ := b.AddCard("first", "", "to-do", "", nil)
+	c, _ := b.AddCard("first", "", "to-do", "")
 	cards := b.ListCards()
 	if len(cards) != 1 {
 		t.Fatalf("expected 1 card, got %d", len(cards))
@@ -40,7 +40,7 @@ func TestAddCardPersistsAcrossReload(t *testing.T) {
 
 	// Session 1: create + add.
 	b1, _ := NewBoard(path)
-	c, _ := b1.AddCard("survives restart", "", "in-progress", "", nil)
+	c, _ := b1.AddCard("survives restart", "", "in-progress", "")
 
 	// Session 2: fresh Board on the same path, should see the card.
 	b2, err := NewBoard(path)
@@ -58,7 +58,7 @@ func TestAddCardPersistsAcrossReload(t *testing.T) {
 
 func TestUpdateCardChangesFields(t *testing.T) {
 	b := freshBoard(t)
-	orig, _ := b.AddCard("title", "desc", "to-do", "", nil)
+	orig, _ := b.AddCard("title", "desc", "to-do", "")
 
 	newTitle := "renamed"
 	newCol := "in-progress"
@@ -97,8 +97,8 @@ func TestUpdateCardUnknownIDReturnsError(t *testing.T) {
 
 func TestDeleteCardRemoves(t *testing.T) {
 	b := freshBoard(t)
-	a, _ := b.AddCard("a", "", "to-do", "", nil)
-	bcard, _ := b.AddCard("b", "", "done", "", nil)
+	a, _ := b.AddCard("a", "", "to-do", "")
+	bcard, _ := b.AddCard("b", "", "done", "")
 
 	if err := b.DeleteCard(a.ID); err != nil {
 		t.Fatalf("DeleteCard: %v", err)
@@ -127,10 +127,10 @@ func TestDeleteCardUnknownIDReturnsError(t *testing.T) {
 
 func TestAddCardAssignsAppendingPositionPerColumn(t *testing.T) {
 	b := freshBoard(t)
-	a, _ := b.AddCard("a", "", "to-do", "", nil)
-	bcard, _ := b.AddCard("b", "", "to-do", "", nil)
-	c, _ := b.AddCard("c", "", "done", "", nil)
-	d, _ := b.AddCard("d", "", "to-do", "", nil)
+	a, _ := b.AddCard("a", "", "to-do", "")
+	bcard, _ := b.AddCard("b", "", "to-do", "")
+	c, _ := b.AddCard("c", "", "done", "")
+	d, _ := b.AddCard("d", "", "to-do", "")
 
 	if a.Position != 0 {
 		t.Errorf("a: want pos 0, got %d", a.Position)
@@ -148,9 +148,9 @@ func TestAddCardAssignsAppendingPositionPerColumn(t *testing.T) {
 
 func TestUpdateCardMoveWithinColumnRenumbers(t *testing.T) {
 	b := freshBoard(t)
-	a, _ := b.AddCard("a", "", "to-do", "", nil) // pos 0
-	bcard, _ := b.AddCard("b", "", "to-do", "", nil) // pos 1
-	c, _ := b.AddCard("c", "", "to-do", "", nil) // pos 2
+	a, _ := b.AddCard("a", "", "to-do", "") // pos 0
+	bcard, _ := b.AddCard("b", "", "to-do", "") // pos 1
+	c, _ := b.AddCard("c", "", "to-do", "") // pos 2
 
 	col := "to-do"
 	pos := 0
@@ -175,10 +175,10 @@ func TestUpdateCardMoveWithinColumnRenumbers(t *testing.T) {
 
 func TestUpdateCardMoveAcrossColumnsRenumbersBoth(t *testing.T) {
 	b := freshBoard(t)
-	a, _ := b.AddCard("a", "", "to-do", "", nil)     // to-do pos 0
-	bcard, _ := b.AddCard("b", "", "to-do", "", nil) // to-do pos 1
-	c, _ := b.AddCard("c", "", "to-do", "", nil)     // to-do pos 2
-	d, _ := b.AddCard("d", "", "done", "", nil)      // done pos 0
+	a, _ := b.AddCard("a", "", "to-do", "")     // to-do pos 0
+	bcard, _ := b.AddCard("b", "", "to-do", "") // to-do pos 1
+	c, _ := b.AddCard("c", "", "to-do", "")     // to-do pos 2
+	d, _ := b.AddCard("d", "", "done", "")      // done pos 0
 
 	// Move b from to-do (pos 1) to done at position 0.
 	col := "done"
@@ -207,8 +207,8 @@ func TestUpdateCardMoveAcrossColumnsRenumbersBoth(t *testing.T) {
 
 func TestUpdateCardClampsPositionPastEnd(t *testing.T) {
 	b := freshBoard(t)
-	a, _ := b.AddCard("a", "", "to-do", "", nil)
-	bcard, _ := b.AddCard("b", "", "to-do", "", nil)
+	a, _ := b.AddCard("a", "", "to-do", "")
+	bcard, _ := b.AddCard("b", "", "to-do", "")
 
 	// Position 99 is past the end; should clamp to end (after a, last slot for b).
 	col := "to-do"
@@ -230,8 +230,8 @@ func TestUpdateCardClampsPositionPastEnd(t *testing.T) {
 
 func TestUpdateCardTitleOnlyDoesNotReorder(t *testing.T) {
 	b := freshBoard(t)
-	a, _ := b.AddCard("a", "", "to-do", "", nil) // pos 0
-	bcard, _ := b.AddCard("b", "", "to-do", "", nil) // pos 1
+	a, _ := b.AddCard("a", "", "to-do", "") // pos 0
+	bcard, _ := b.AddCard("b", "", "to-do", "") // pos 1
 
 	newTitle := "renamed"
 	if _, err := b.UpdateCard(a.ID, CardUpdate{Title: &newTitle}); err != nil {
@@ -272,7 +272,7 @@ func TestLoadNormalisesLegacyZeroPositions(t *testing.T) {
 
 func TestAddCardReturnsCardWithGivenFields(t *testing.T) {
 	b := freshBoard(t)
-	c, err := b.AddCard("Set up DNS", "A record for kanban.pitchforks.net", "to-do", "", nil)
+	c, err := b.AddCard("Set up DNS", "A record for kanban.pitchforks.net", "to-do", "")
 	if err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestAddCardReturnsCardWithGivenFields(t *testing.T) {
 
 func TestColorRoundTripsThroughAddAndUpdate(t *testing.T) {
 	b := freshBoard(t)
-	c, err := b.AddCard("with colour", "", "to-do", "blue", nil)
+	c, err := b.AddCard("with colour", "", "to-do", "blue")
 	if err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestColorRoundTripsThroughAddAndUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	roundtripped, _ := b2.AddCard("round-trip", "", "to-do", "purple", nil)
+	roundtripped, _ := b2.AddCard("round-trip", "", "to-do", "purple")
 	all := b2.ListCards()
 	if len(all) != 2 {
 		t.Fatalf("expected 2 cards after reload, got %d", len(all))

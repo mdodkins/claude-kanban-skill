@@ -67,35 +67,20 @@ Create one card. Body:
 ```json
 { "title": "Required, max 200 chars",
   "description": "Optional, max 4000 chars",
-  "column": "to-do | blocked | in-progress | in-review | done",
-  "tags": ["@tobby", "urgent"] }
+  "column": "to-do | blocked | in-progress | in-review | done" }
 ```
 
-`tags` is optional (max 20 tags, each max 50 chars). Returns `201` and the
-created card. `400` if `title` is empty.
+Returns `201` and the created card. `400` if `title` is empty.
 
 ### `PATCH /api/cards/{id}`
 
 Sparse update. Send only the fields you want to change:
 
 ```json
-{ "title": "...", "description": "...", "column": "in-progress", "position": 0, "tags": ["@tobby"] }
+{ "title": "...", "description": "...", "column": "in-progress", "position": 0 }
 ```
 
-`tags` replaces the full tag list when present. Returns `200` and the updated
-card. `404` if the ID is unknown.
-
-## Tagging and assignment
-
-Use `tags` for both categorisation and assignment. To assign a card to the
-agent, tag it `@tobby`. To assign to the human, use `@laurent`. Tags render as
-pills on each card in the browser and are editable via the card modal.
-
-To list cards assigned to the agent:
-
-```bash
-curl -s http://127.0.0.1:8765/api/cards | jq '[.[] | select(.tags[]? == "@tobby")]'
-```
+Returns `200` and the updated card. `404` if the ID is unknown.
 
 ### `DELETE /api/cards/{id}`
 

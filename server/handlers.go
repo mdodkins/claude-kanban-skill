@@ -15,7 +15,6 @@ import (
 // Routes:
 //
 //	GET    /api/agents                          list agent names
-//	GET    /api/tags                            list all unique tags
 //	GET    /api/cards                           list all cards
 //	POST   /api/cards                           create
 //	PATCH  /api/cards/{id}                      sparse update
@@ -36,14 +35,6 @@ func NewMux(b *Board, agents []string, attachDir string) http.Handler {
 			list = []string{}
 		}
 		writeJSON(w, http.StatusOK, list)
-	})
-	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", "GET")
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		writeJSON(w, http.StatusOK, b.ListTags())
 	})
 	mux.HandleFunc("/api/cards", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -110,24 +101,10 @@ func NewMux(b *Board, agents []string, attachDir string) http.Handler {
 }
 
 type createRequest struct {
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Column      string   `json:"column"`
-	Color       string   `json:"color"`
-	Tags        []string `json:"tags"`
-}
-
-// validateTags checks count and per-tag length limits.
-func validateTags(tags []string) (string, bool) {
-	if len(tags) > 20 {
-		return "too many tags (max 20)", false
-	}
-	for _, t := range tags {
-		if len(t) > 50 {
-			return "tag too long (max 50 chars each)", false
-		}
-	}
-	return "", true
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Column      string `json:"column"`
+	Color       string `json:"color"`
 }
 
 // validColors is the allowlist for the Card.Color field. Empty string
@@ -161,11 +138,7 @@ func handleCreate(w http.ResponseWriter, r *http.Request, b *Board) {
 		http.Error(w, "invalid color (allowed: red, orange, yellow, green, blue, purple, grey, or empty)", http.StatusBadRequest)
 		return
 	}
-	if msg, ok := validateTags(req.Tags); !ok {
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
-	c, err := b.AddCard(req.Title, req.Description, req.Column, req.Color, req.Tags)
+	c, err := b.AddCard(req.Title, req.Description, req.Column, req.Color)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -182,12 +155,6 @@ func handleUpdate(w http.ResponseWriter, r *http.Request, b *Board, id string) {
 	if u.Color != nil {
 		if _, ok := validColors[*u.Color]; !ok {
 			http.Error(w, "invalid color (allowed: red, orange, yellow, green, blue, purple, grey, or empty)", http.StatusBadRequest)
-			return
-		}
-	}
-	if u.Tags != nil {
-		if msg, ok := validateTags(*u.Tags); !ok {
-			http.Error(w, msg, http.StatusBadRequest)
 			return
 		}
 	}

@@ -59,8 +59,8 @@ func TestPostCardMissingTitleReturns400(t *testing.T) {
 
 func TestGetCardsReturnsAll(t *testing.T) {
 	mux, b := newServer(t)
-	b.AddCard("a", "", "to-do", "", nil)
-	b.AddCard("b", "", "done", "", nil)
+	b.AddCard("a", "", "to-do", "")
+	b.AddCard("b", "", "done", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/cards", nil)
 	rec := httptest.NewRecorder()
@@ -79,7 +79,7 @@ func TestGetCardsReturnsAll(t *testing.T) {
 
 func TestPatchCardUpdates(t *testing.T) {
 	mux, b := newServer(t)
-	c, _ := b.AddCard("orig", "", "to-do", "", nil)
+	c, _ := b.AddCard("orig", "", "to-do", "")
 
 	body := `{"column":"done"}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/cards/"+c.ID, strings.NewReader(body))
@@ -110,7 +110,7 @@ func TestPatchUnknownIDReturns404(t *testing.T) {
 
 func TestDeleteCardReturns204(t *testing.T) {
 	mux, b := newServer(t)
-	c, _ := b.AddCard("doomed", "", "to-do", "", nil)
+	c, _ := b.AddCard("doomed", "", "to-do", "")
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/cards/"+c.ID, nil)
 	rec := httptest.NewRecorder()
@@ -149,7 +149,7 @@ func multipartBody(t *testing.T, filename, content string) (*bytes.Buffer, strin
 
 func TestAttachmentUploadAndDownload(t *testing.T) {
 	mux, b := newServer(t)
-	card, _ := b.AddCard("has attachment", "", "to-do", "", nil)
+	card, _ := b.AddCard("has attachment", "", "to-do", "")
 
 	// Upload
 	body, ct := multipartBody(t, "hello.txt", "hello world")
@@ -188,7 +188,7 @@ func TestAttachmentUploadAndDownload(t *testing.T) {
 
 func TestAttachmentDeleteRemovesMetadata(t *testing.T) {
 	mux, b := newServer(t)
-	card, _ := b.AddCard("del card", "", "to-do", "", nil)
+	card, _ := b.AddCard("del card", "", "to-do", "")
 
 	// Upload then delete
 	body, ct := multipartBody(t, "bye.txt", "bye")

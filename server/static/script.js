@@ -18,7 +18,6 @@ const titleEl      = document.getElementById('card-title');
 const descEl       = document.getElementById('card-description');
 const colEl        = document.getElementById('card-column');
 const colorEl      = document.getElementById('card-color');
-const tagsEl       = document.getElementById('card-tags');
 const delBtn       = document.getElementById('card-delete');
 const cancelBtn    = document.getElementById('card-cancel');
 const addBtn       = document.getElementById('add-card');
@@ -26,10 +25,6 @@ const attachDropEl = document.getElementById('attach-drop');
 const attachInputEl= document.getElementById('attach-input');
 const attachListEl = document.getElementById('attach-list');
 const attachPickBtn= document.getElementById('attach-pick');
-
-function parseTags(raw) {
-  return raw.split(',').map(t => t.trim()).filter(Boolean);
-}
 
 let editingId      = null; // null while creating, card.id while editing
 let attachExisting = [];   // existing attachments loaded from the server for the current card
@@ -290,18 +285,6 @@ function renderCard(card) {
     el.appendChild(desc);
   }
 
-  if (card.tags && card.tags.length > 0) {
-    const tagsRow = document.createElement('div');
-    tagsRow.className = 'tags';
-    for (const tag of card.tags) {
-      const pill = document.createElement('span');
-      pill.className = 'tag';
-      pill.textContent = tag;
-      tagsRow.appendChild(pill);
-    }
-    el.appendChild(tagsRow);
-  }
-
   const idChip = document.createElement('span');
   idChip.className = 'card-id';
   idChip.textContent = card.id.slice(0, 8);
@@ -352,7 +335,6 @@ function openModal(card) {
     descEl.value = card.description || '';
     colEl.value = card.column || 'to-do';
     colorEl.value = card.color || '';
-    tagsEl.value = (card.tags || []).join(', ');
     delBtn.hidden = false;
   } else {
     editingId = null;
@@ -360,7 +342,6 @@ function openModal(card) {
     descEl.value = '';
     colEl.value = 'to-do';
     colorEl.value = '';
-    tagsEl.value = '';
     delBtn.hidden = true;
   }
   renderAttachList();
@@ -377,7 +358,6 @@ form.addEventListener('submit', async e => {
     description: descEl.value,
     column: colEl.value,
     color: colorEl.value,
-    tags: parseTags(tagsEl.value),
   };
   if (!payload.title) return;
   try {
@@ -448,8 +428,8 @@ syncThemeButton();
 
 // ===== @-mention agent suggestions =====
 //
-// When the user types @ in the description field, we fetch /api/agents and
-// show a filtered dropdown. Arrow keys navigate; Enter selects; Escape closes.
+// Typing @ in the description field fetches /api/agents and shows a filtered
+// dropdown. Arrow keys navigate; Enter selects; Escape closes.
 
 const suggestEl = document.getElementById('mention-suggestions');
 let agentsCache = null;
@@ -464,18 +444,11 @@ async function loadAgents() {
   return agentsCache;
 }
 
-async function loadTags() {
-  try {
-    const res = await fetch('api/tags');
-    return res.ok ? await res.json() : [];
-  } catch { return []; }
-}
-
-// Returns { trigger, query, atStart } if cursor follows @ or #, else null.
+// Returns { trigger, query, atStart } if cursor follows @, else null.
 function mentionQueryAt(el) {
   const before = el.value.slice(0, el.selectionStart);
-  const m = before.match(/[@#](\w*)$/);
-  return m ? { trigger: m[0][0], query: m[1], atStart: el.selectionStart - m[0].length } : null;
+  const m = before.match(/@(\w*)$/);
+  return m ? { trigger: '@', query: m[1], atStart: el.selectionStart - m[0].length } : null;
 }
 
 function applyMention(textarea, atStart, trigger, name) {
@@ -550,12 +523,12 @@ async function onDescInput() {
   // Defer one tick so mobile keyboards can settle before we check.
   await new Promise(r => setTimeout(r, 0));
   const before = snapValue.slice(0, snapSel);
-  const m = before.match(/[@#](\w*)$/);
+  const m = before.match(/@(\w*)$/);
   if (!m) { hideMentions(); return; }
-  const trigger = m[0][0], query = m[1], atStart = snapSel - m[0].length;
-  const names = trigger === '@' ? await loadAgents() : await loadTags();
+  const query = m[1], atStart = snapSel - m[0].length;
+  const names = await loadAgents();
   if (!names.length) { hideMentions(); return; }
-  showMentions(descEl, names, query, atStart, trigger);
+  showMentions(descEl, names, query, atStart, '@');
 }
 
 function onDescKeydown(e) {
