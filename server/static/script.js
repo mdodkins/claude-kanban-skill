@@ -18,6 +18,7 @@ const titleEl      = document.getElementById('card-title');
 const descEl       = document.getElementById('card-description');
 const colEl        = document.getElementById('card-column');
 const colorEl      = document.getElementById('card-color');
+const projectEl    = document.getElementById('card-project');
 const delBtn       = document.getElementById('card-delete');
 const cancelBtn    = document.getElementById('card-cancel');
 const addBtn       = document.getElementById('add-card');
@@ -27,6 +28,7 @@ const attachListEl = document.getElementById('attach-list');
 const attachPickBtn= document.getElementById('attach-pick');
 
 let editingId      = null; // null while creating, card.id while editing
+let projects       = [];   // cached project list
 let attachExisting = [];   // existing attachments loaded from the server for the current card
 let attachPending  = [];   // files queued for upload when Save is clicked
 
@@ -59,6 +61,58 @@ async function apiDelete(id) {
   const res = await fetch('api/cards/' + encodeURIComponent(id), { method: 'DELETE' });
   if (!res.ok) throw new Error('delete failed: ' + res.status);
 }
+async function apiListProjects() {
+  const res = await fetch('api/projects');
+  if (!res.ok) throw new Error('projects list failed');
+  return res.json();
+}
+async function apiCreateProject(name) {
+  const res = await fetch('api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error('create project failed: ' + res.status);
+  return res.json();
+}
+
+// ===== Project dropdown =====
+
+function projectName(id) {
+  if (!id) return null;
+  const p = projects.find(p => p.id === id);
+  return p ? p.name : null;
+}
+
+function populateProjectDropdown(selectedId) {
+  projectEl.innerHTML = '<option value="">— none —</option>';
+  for (const p of projects) {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name;
+    projectEl.appendChild(opt);
+  }
+  const addOpt = document.createElement('option');
+  addOpt.value = '__new__';
+  addOpt.textContent = '＋ New project…';
+  projectEl.appendChild(addOpt);
+  projectEl.value = selectedId || '';
+}
+
+projectEl.addEventListener('change', async () => {
+  if (projectEl.value !== '__new__') return;
+  const name = prompt('Project name:');
+  if (!name || !name.trim()) { projectEl.value = ''; return; }
+  try {
+    const p = await apiCreateProject(name.trim());
+    projects.push(p);
+    populateProjectDropdown(p.id);
+  } catch (err) {
+    console.error(err);
+    alert('Could not create project: ' + err.message);
+    projectEl.value = '';
+  }
+});
 
 // ===== Drag-and-drop helpers =====
 //
@@ -285,6 +339,14 @@ function renderCard(card) {
     el.appendChild(desc);
   }
 
+  const pName = projectName(card.projectId);
+  if (pName) {
+    const tag = document.createElement('div');
+    tag.className = 'card-project-tag';
+    tag.textContent = pName;
+    el.appendChild(tag);
+  }
+
   const idChip = document.createElement('span');
   idChip.className = 'card-id';
   idChip.textContent = card.id.slice(0, 8);
@@ -329,6 +391,7 @@ function renderCard(card) {
 function openModal(card) {
   attachPending  = [];
   attachExisting = card ? (card.attachments || []) : [];
+  populateProjectDropdown(card ? card.projectId : '');
   if (card) {
     editingId = card.id;
     titleEl.value = card.title;
@@ -358,6 +421,7 @@ form.addEventListener('submit', async e => {
     description: descEl.value,
     column: colEl.value,
     color: colorEl.value,
+    projectId: projectEl.value === '__new__' ? '' : projectEl.value,
   };
   if (!payload.title) return;
   try {
@@ -651,7 +715,9 @@ attachDropEl.addEventListener('drop', e => {
 
 async function reload() {
   try {
-    render(await apiList());
+    const [cards, projs] = await Promise.all([apiList(), apiListProjects()]);
+    projects = projs || [];
+    render(cards);
   } catch (err) {
     console.error(err);
     boardEl.innerHTML = '<p style="padding:1rem;color:#b54848">Failed to load: ' + err.message + '</p>';

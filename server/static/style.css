@@ -298,6 +298,18 @@ body {
 }
 .modal-footer .spacer { flex: 1; }
 
+.card .card-project-tag {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 0.2rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .card .card-id {
   display: block;
   margin-top: 0.4rem;
