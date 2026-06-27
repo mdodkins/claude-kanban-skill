@@ -231,13 +231,31 @@ async function commitDrag(e) {
   clearDragOverHighlight();
   clearDropIndicator();
   if (!body) return;
+  // Where the card's top sat on screen at the drop (matches the ghost). After
+  // the re-render we pin it back here so the card stays under the cursor instead
+  // of jumping as the list reflows around its vacated slot.
+  const anchorTop = e.clientY - ds.offsetY;
   try {
     await apiUpdate(ds.cardId, { column: columnId, position: index });
-    reload();
+    await reload();
+    anchorCardAt(ds.cardId, anchorTop);
   } catch (err) {
     console.error(err);
     alert('Move failed: ' + err.message);
   }
+}
+
+// After a move + re-render, nudge the moved card's column so the card keeps the
+// same on-screen height it was dropped at. render() preserves each column's
+// scroll, but the moved card's own column reflows around the slot it left, so
+// without this the card appears to jump by a slot or two.
+function anchorCardAt(cardId, desiredTop) {
+  const sel = (window.CSS && CSS.escape) ? CSS.escape(cardId) : cardId;
+  const el = boardEl.querySelector('.card[data-id="' + sel + '"]');
+  if (!el) return;
+  const body = el.closest('.column-body');
+  if (!body) return;
+  body.scrollTop += el.getBoundingClientRect().top - desiredTop;
 }
 
 function abortDrag() {
