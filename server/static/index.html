@@ -58,7 +58,17 @@
     </label>
     <label>
       <span>Description</span>
-      <textarea id="card-description" rows="6" maxlength="4000"></textarea>
+      <div class="desc-wrap">
+        <textarea id="card-description" rows="6" maxlength="4000"></textarea>
+        <div id="mention-suggestions" class="mention-dropdown" hidden></div>
+      </div>
+    </label>
+    <label>
+      <span>Project</span>
+      <select id="card-project">
+        <option value="">— none —</option>
+        <!-- populated by script.js -->
+      </select>
     </label>
     <label>
       <span>Column</span>
@@ -78,6 +88,14 @@
         <option value="grey">Grey</option>
       </select>
     </label>
+    <div class="attach-group">
+      <span class="attach-group-label">Attachments</span>
+      <div id="attach-drop" class="attach-drop">
+        Drop files here or <button type="button" id="attach-pick" class="btn-link">browse</button>
+        <input type="file" id="attach-input" multiple hidden />
+      </div>
+      <ul id="attach-list" class="attach-list"></ul>
+    </div>
     <footer class="modal-footer">
       <button type="button" id="card-delete" class="btn danger" hidden>Delete</button>
       <span class="spacer"></span>

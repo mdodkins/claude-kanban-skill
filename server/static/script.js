@@ -13,18 +13,26 @@ function findColumn(id) {
 // cycle through these by position, so any column (including new ones) is hued.
 const COLUMN_PALETTE = 7;
 
-const boardEl = document.querySelector('.board');
-const modal     = document.getElementById('card-modal');
-const form      = document.getElementById('card-form');
-const titleEl   = document.getElementById('card-title');
-const descEl    = document.getElementById('card-description');
-const colEl     = document.getElementById('card-column');
-const colorEl   = document.getElementById('card-color');
-const delBtn    = document.getElementById('card-delete');
-const cancelBtn = document.getElementById('card-cancel');
-const addBtn    = document.getElementById('add-card');
+const boardEl      = document.querySelector('.board');
+const modal        = document.getElementById('card-modal');
+const form         = document.getElementById('card-form');
+const titleEl      = document.getElementById('card-title');
+const descEl       = document.getElementById('card-description');
+const colEl        = document.getElementById('card-column');
+const colorEl      = document.getElementById('card-color');
+const projectEl    = document.getElementById('card-project');
+const delBtn       = document.getElementById('card-delete');
+const cancelBtn    = document.getElementById('card-cancel');
+const addBtn       = document.getElementById('add-card');
+const attachDropEl = document.getElementById('attach-drop');
+const attachInputEl= document.getElementById('attach-input');
+const attachListEl = document.getElementById('attach-list');
+const attachPickBtn= document.getElementById('attach-pick');
 
-let editingId = null; // null while creating, card.id while editing
+let editingId      = null; // null while creating, card.id while editing
+let projects       = [];   // cached project list
+let attachExisting = [];   // existing attachments loaded from the server for the current card
+let attachPending  = [];   // files queued for upload when Save is clicked
 
 // ===== API =====
 
@@ -54,6 +62,20 @@ async function apiUpdate(id, patch) {
 async function apiDelete(id) {
   const res = await fetch('api/cards/' + encodeURIComponent(id), { method: 'DELETE' });
   if (!res.ok) throw new Error('delete failed: ' + res.status);
+}
+async function apiListProjects() {
+  const res = await fetch('api/projects');
+  if (!res.ok) throw new Error('projects list failed');
+  return res.json();
+}
+async function apiCreateProject(name) {
+  const res = await fetch('api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error('create project failed: ' + res.status);
+  return res.json();
 }
 async function apiColumns() {
   const res = await fetch('api/columns');
@@ -91,6 +113,44 @@ async function apiMoveColumn(id, position) {
   if (!res.ok) throw new Error('move column failed: ' + res.status);
   return res.json();
 }
+
+// ===== Project dropdown =====
+
+function projectName(id) {
+  if (!id) return null;
+  const p = projects.find(p => p.id === id);
+  return p ? p.name : null;
+}
+
+function populateProjectDropdown(selectedId) {
+  projectEl.innerHTML = '<option value="">— none —</option>';
+  for (const p of projects) {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name;
+    projectEl.appendChild(opt);
+  }
+  const addOpt = document.createElement('option');
+  addOpt.value = '__new__';
+  addOpt.textContent = '＋ New project…';
+  projectEl.appendChild(addOpt);
+  projectEl.value = selectedId || '';
+}
+
+projectEl.addEventListener('change', async () => {
+  if (projectEl.value !== '__new__') return;
+  const name = prompt('Project name:');
+  if (!name || !name.trim()) { projectEl.value = ''; return; }
+  try {
+    const p = await apiCreateProject(name.trim());
+    projects.push(p);
+    populateProjectDropdown(p.id);
+  } catch (err) {
+    console.error(err);
+    alert('Could not create project: ' + err.message);
+    projectEl.value = '';
+  }
+});
 
 // ===== Drag-and-drop helpers =====
 //
@@ -586,6 +646,27 @@ function renderCard(card) {
     el.appendChild(desc);
   }
 
+  const pName = projectName(card.projectId);
+  if (pName) {
+    const tag = document.createElement('div');
+    tag.className = 'card-project-tag';
+    tag.textContent = pName;
+    el.appendChild(tag);
+  }
+
+  const idChip = document.createElement('span');
+  idChip.className = 'card-id';
+  idChip.textContent = card.id.slice(0, 8);
+  el.appendChild(idChip);
+
+  if (card.attachments && card.attachments.length > 0) {
+    const clip = document.createElement('span');
+    clip.className = 'card-attach-count';
+    const n = card.attachments.length;
+    clip.textContent = '📎 ' + n + (n === 1 ? ' file' : ' files');
+    el.appendChild(clip);
+  }
+
   el.addEventListener('pointerdown', e => {
     // Primary button only for mouse; touch and pen have no button concept
     // so e.button is 0 for them anyway.
@@ -646,6 +727,9 @@ function populateColumnSelect() {
 }
 
 function openModal(card) {
+  attachPending  = [];
+  attachExisting = card ? (card.attachments || []) : [];
+  populateProjectDropdown(card ? card.projectId : '');
   populateColumnSelect();
   const fallbackCol = columns.length ? columns[0].id : '';
   if (card) {
@@ -663,6 +747,7 @@ function openModal(card) {
     colorEl.value = '';
     delBtn.hidden = true;
   }
+  renderAttachList();
   modal.showModal();
   setTimeout(() => titleEl.focus(), 0);
 }
@@ -676,14 +761,27 @@ form.addEventListener('submit', async e => {
     description: descEl.value,
     column: colEl.value,
     color: colorEl.value,
+    projectId: projectEl.value === '__new__' ? '' : projectEl.value,
   };
   if (!payload.title) return;
   try {
+    let cardId = editingId;
     if (editingId) {
       await apiUpdate(editingId, payload);
     } else {
-      await apiCreate(payload);
+      const created = await apiCreate(payload);
+      cardId = created.id;
     }
+    // Upload any pending files
+    for (const p of attachPending) {
+      const fd = new FormData();
+      fd.append('file', p.file);
+      const res = await fetch('api/cards/' + encodeURIComponent(cardId) + '/attachments', {
+        method: 'POST', body: fd,
+      });
+      if (!res.ok) console.error('attachment upload failed for', p.file.name, res.status);
+    }
+    attachPending = [];
     modal.close();
     reload();
   } catch (err) {
@@ -750,11 +848,233 @@ themeBtn.addEventListener('click', () => {
 });
 syncThemeButton();
 
+// ===== @-mention agent suggestions =====
+//
+// Typing @ in the description field fetches /api/agents and shows a filtered
+// dropdown. Arrow keys navigate; Enter selects; Escape closes.
+
+const suggestEl = document.getElementById('mention-suggestions');
+let agentsCache = null;
+let mentionState = null; // { textarea, atStart, trigger } while the dropdown is open
+
+async function loadAgents() {
+  if (agentsCache !== null) return agentsCache;
+  try {
+    const res = await fetch('api/agents');
+    agentsCache = res.ok ? await res.json() : [];
+  } catch { agentsCache = []; }
+  return agentsCache;
+}
+
+// Returns { trigger, query, atStart } if cursor follows @, else null.
+function mentionQueryAt(el) {
+  const before = el.value.slice(0, el.selectionStart);
+  const m = before.match(/@(\w*)$/);
+  return m ? { trigger: '@', query: m[1], atStart: el.selectionStart - m[0].length } : null;
+}
+
+function applyMention(textarea, atStart, trigger, name) {
+  const before = textarea.value.slice(0, atStart);
+  const after = textarea.value.slice(textarea.selectionStart);
+  textarea.value = before + trigger + name + after;
+  const pos = atStart + 1 + name.length;
+  textarea.selectionStart = textarea.selectionEnd = pos;
+}
+
+function hideMentions() {
+  suggestEl.hidden = true;
+  suggestEl.innerHTML = '';
+  mentionState = null;
+}
+
+function showMentions(textarea, names, query, atStart, trigger) {
+  const filtered = names.filter(n => n.toLowerCase().startsWith(query.toLowerCase()));
+  if (!filtered.length) { hideMentions(); return; }
+
+  mentionState = { textarea, atStart, trigger };
+  suggestEl.innerHTML = '';
+  for (const name of filtered) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mention-item';
+    btn.dataset.name = name;
+    const sigil = document.createElement('span');
+    sigil.className = 'mention-at';
+    sigil.textContent = trigger;
+    btn.appendChild(sigil);
+    btn.appendChild(document.createTextNode(name));
+    // Desktop: mousedown fires before blur; preventDefault keeps textarea focused.
+    btn.addEventListener('mousedown', e => {
+      e.preventDefault();
+      applyMention(textarea, atStart, trigger, name);
+      hideMentions();
+    });
+    // Mobile: touchend fires after blur (blur has a 300 ms grace period).
+    // preventDefault stops the subsequent synthetic mousedown/click.
+    btn.addEventListener('touchend', e => {
+      e.preventDefault();
+      applyMention(textarea, atStart, trigger, name);
+      hideMentions();
+    });
+    suggestEl.appendChild(btn);
+  }
+  suggestEl.firstChild.classList.add('active');
+
+  // Flip above the textarea when the virtual keyboard is covering the space below.
+  // visualViewport.height shrinks when the keyboard opens (unlike window.innerHeight
+  // on iOS), so this reliably detects the keyboard on mobile.
+  const rect = textarea.getBoundingClientRect();
+  const vpH = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  suggestEl.classList.toggle('above', vpH - rect.bottom < 120);
+  suggestEl.hidden = false;
+}
+
+function moveMentionActive(delta) {
+  const items = [...suggestEl.querySelectorAll('.mention-item')];
+  if (!items.length) return;
+  const cur = items.findIndex(el => el.classList.contains('active'));
+  items[cur]?.classList.remove('active');
+  items[Math.max(0, Math.min(items.length - 1, cur + delta))].classList.add('active');
+}
+
+async function onDescInput() {
+  // Snapshot cursor position synchronously — selectionStart can reset to 0
+  // during async gaps (mobile keyboards, automation contexts).
+  const snapValue = descEl.value;
+  const snapSel   = descEl.selectionStart;
+  // Defer one tick so mobile keyboards can settle before we check.
+  await new Promise(r => setTimeout(r, 0));
+  const before = snapValue.slice(0, snapSel);
+  const m = before.match(/@(\w*)$/);
+  if (!m) { hideMentions(); return; }
+  const query = m[1], atStart = snapSel - m[0].length;
+  const names = await loadAgents();
+  if (!names.length) { hideMentions(); return; }
+  showMentions(descEl, names, query, atStart, '@');
+}
+
+function onDescKeydown(e) {
+  if (suggestEl.hidden) return;
+  if (e.key === 'Escape') { hideMentions(); e.stopPropagation(); return; }
+  if (e.key === 'ArrowDown') { e.preventDefault(); moveMentionActive(1); return; }
+  if (e.key === 'ArrowUp')   { e.preventDefault(); moveMentionActive(-1); return; }
+  if (e.key === 'Enter' && mentionState) {
+    const active = suggestEl.querySelector('.mention-item.active');
+    if (active) {
+      e.preventDefault();
+      applyMention(mentionState.textarea, mentionState.atStart, mentionState.trigger, active.dataset.name);
+      hideMentions();
+    }
+  }
+}
+
+descEl.addEventListener('input',   onDescInput);
+descEl.addEventListener('keydown', onDescKeydown);
+// Grace period on blur: 300 ms lets touchend fire before we close the list.
+descEl.addEventListener('blur', () => setTimeout(hideMentions, 300));
+// Hide if the modal closes.
+modal.addEventListener('close', hideMentions);
+
+// ===== Attachments =====
+
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function renderAttachList() {
+  attachListEl.innerHTML = '';
+  for (const a of attachExisting) {
+    const li = document.createElement('li');
+    li.className = 'attach-item';
+    const link = document.createElement('a');
+    link.href = 'api/cards/' + encodeURIComponent(editingId) + '/attachments/' + encodeURIComponent(a.id);
+    link.download = a.filename;
+    link.textContent = a.filename;
+    link.className = 'attach-name';
+    const size = document.createElement('span');
+    size.className = 'attach-size';
+    size.textContent = fmtSize(a.size);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'attach-del-btn';
+    btn.title = 'Remove attachment';
+    btn.textContent = '×';
+    btn.addEventListener('click', async () => {
+      try {
+        const res = await fetch('api/cards/' + encodeURIComponent(editingId) + '/attachments/' + encodeURIComponent(a.id), { method: 'DELETE' });
+        if (!res.ok) throw new Error(res.status);
+        attachExisting = attachExisting.filter(x => x.id !== a.id);
+        li.remove();
+      } catch (err) {
+        alert('Could not delete attachment: ' + err.message);
+      }
+    });
+    li.append(link, size, btn);
+    attachListEl.appendChild(li);
+  }
+  for (const p of attachPending) {
+    const li = document.createElement('li');
+    li.className = 'attach-item attach-pending';
+    const name = document.createElement('span');
+    name.className = 'attach-name';
+    name.textContent = p.file.name;
+    const size = document.createElement('span');
+    size.className = 'attach-size';
+    size.textContent = fmtSize(p.file.size);
+    const badge = document.createElement('span');
+    badge.className = 'attach-pending-badge';
+    badge.textContent = 'pending';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'attach-del-btn';
+    btn.title = 'Remove';
+    btn.textContent = '×';
+    btn.addEventListener('click', () => {
+      attachPending = attachPending.filter(x => x !== p);
+      li.remove();
+    });
+    li.append(name, size, badge, btn);
+    attachListEl.appendChild(li);
+  }
+}
+
+const MAX_ATTACH_BYTES = 10 * 1024 * 1024;
+
+function addAttachFiles(fileList) {
+  for (const f of fileList) {
+    if (f.size > MAX_ATTACH_BYTES) {
+      alert(f.name + ' is too large (max 10 MB).');
+      continue;
+    }
+    attachPending.push({ file: f });
+  }
+  renderAttachList();
+}
+
+attachPickBtn.addEventListener('click', () => attachInputEl.click());
+attachInputEl.addEventListener('change', () => {
+  addAttachFiles(attachInputEl.files);
+  attachInputEl.value = '';
+});
+attachDropEl.addEventListener('dragover', e => {
+  e.preventDefault();
+  attachDropEl.classList.add('drag-active');
+});
+attachDropEl.addEventListener('dragleave', () => attachDropEl.classList.remove('drag-active'));
+attachDropEl.addEventListener('drop', e => {
+  e.preventDefault();
+  attachDropEl.classList.remove('drag-active');
+  addAttachFiles(e.dataTransfer.files);
+});
+
 // ===== Boot =====
 
 async function reload() {
   try {
-    const [cards, cols] = await Promise.all([apiList(), apiColumns()]);
+    const [cards, projs, cols] = await Promise.all([apiList(), apiListProjects(), apiColumns()]);
+    projects = projs || [];
     columns = cols || [];
     render(cards);
   } catch (err) {

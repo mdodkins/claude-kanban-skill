@@ -86,6 +86,44 @@ Returns `200` and the updated card. `404` if the ID is unknown.
 
 Returns `204`. `404` if the ID is unknown.
 
+### `POST /api/cards/{id}/attachments`
+
+Upload a file attached to a card. Send as `multipart/form-data` with a `file`
+field. Max 10 MB per file. Returns `201` and the attachment metadata:
+
+```json
+{ "id": "abc123", "filename": "diagram.png", "mime_type": "image/png", "size": 42000 }
+```
+
+### `GET /api/cards/{id}/attachments/{aid}`
+
+Download an attachment. Returns the file with `Content-Disposition: attachment`.
+
+### `DELETE /api/cards/{id}/attachments/{aid}`
+
+Returns `204`. Removes the metadata and the file from disk.
+
+## Displaying cards to the user
+
+When you show cards (listing the board, reporting what you worked on, etc.),
+always include a short ID prefix so the user can reference cards by ID in
+follow-up messages.
+
+Format each card as:
+
+```
+[id8] Title
+```
+
+where `id8` is the first 8 characters of the card's `id` field. Example:
+
+```
+[314d036c] Debug on local target from repo hosted on VPS
+```
+
+When the user references a card by a short prefix (e.g. "move card 314d to
+done"), find the card whose `id` starts with that prefix and act on it.
+
 ## Seeding many cards
 
 When the user asks you to break a piece of work into cards and put them on the

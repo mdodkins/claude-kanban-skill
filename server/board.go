@@ -14,15 +14,32 @@ import (
 
 // Card is one item on the kanban board.
 type Card struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Column      string `json:"column"`
-	Position    int    `json:"position"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Column      string   `json:"column"`
+	Position    int      `json:"position"`
 	// Color is an optional palette tag rendered by the frontend as a
 	// left-border + tinted background. Empty string = no colour.
 	// Allowed values are validated by the API layer (see handlers.go).
-	Color string `json:"color,omitempty"`
+	Color       string       `json:"color,omitempty"`
+	ProjectID   string       `json:"projectId,omitempty"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+}
+
+// Project groups cards under a named label.
+type Project struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Attachment is metadata for a file attached to a card.
+// The file itself lives at <attachDir>/<cardID>/<ID> on disk.
+type Attachment struct {
+	ID       string `json:"id"`
+	Filename string `json:"filename"`
+	MimeType string `json:"mime_type"`
+	Size     int64  `json:"size"`
 }
 
 // Column is one board column. Order is the slice order in Board.columns.
@@ -48,9 +65,16 @@ type Board struct {
 	path    string
 	colPath string // sibling file holding the column list
 
-	mu      sync.Mutex
-	cards   []Card
-	columns []Column
+	mu       sync.Mutex
+	cards    []Card
+	projects []Project
+	columns  []Column
+}
+
+// boardState is the on-disk JSON envelope.
+type boardState struct {
+	Cards    []Card    `json:"cards"`
+	Projects []Project `json:"projects"`
 }
 
 // NewBoard loads (or creates) the board state at path.
@@ -69,7 +93,9 @@ func NewBoard(path string) (*Board, error) {
 	return b, nil
 }
 
-// load reads the state file into b.cards. Missing file = empty.
+// load reads the state file. Missing file = empty board.
+// Handles both the legacy array format ([]Card) and the current envelope
+// format ({cards:[...], projects:[...]}).
 func (b *Board) load() error {
 	data, err := os.ReadFile(b.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -81,11 +107,19 @@ func (b *Board) load() error {
 	if len(data) == 0 {
 		return nil
 	}
-	var cards []Card
-	if err := json.Unmarshal(data, &cards); err != nil {
-		return fmt.Errorf("parse state: %w", err)
+	// Try envelope format first.
+	var state boardState
+	if json.Unmarshal(data, &state) == nil && (state.Cards != nil || state.Projects != nil) {
+		b.cards = state.Cards
+		b.projects = state.Projects
+	} else {
+		// Fall back to legacy array-of-cards format.
+		var cards []Card
+		if err := json.Unmarshal(data, &cards); err != nil {
+			return fmt.Errorf("parse state: %w", err)
+		}
+		b.cards = cards
 	}
-	b.cards = cards
 	// Legacy state files may have all-zero positions. Renumber each column
 	// 0..N-1 in load order so drag-and-drop has a stable basis.
 	b.renumberAllColumns()
@@ -117,7 +151,15 @@ func (b *Board) save() error {
 	if err := os.MkdirAll(filepath.Dir(b.path), 0o755); err != nil {
 		return fmt.Errorf("mkdir state dir: %w", err)
 	}
-	data, err := json.MarshalIndent(b.cards, "", "  ")
+	cards := b.cards
+	if cards == nil {
+		cards = []Card{}
+	}
+	projects := b.projects
+	if projects == nil {
+		projects = []Project{}
+	}
+	data, err := json.MarshalIndent(boardState{Cards: cards, Projects: projects}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode state: %w", err)
 	}
@@ -316,7 +358,7 @@ func (b *Board) ListCards() []Card {
 
 // AddCard creates a card on the board and persists. The new card is appended
 // to the end of its column (Position = current count in that column).
-func (b *Board) AddCard(title, description, column, color string) (Card, error) {
+func (b *Board) AddCard(title, description, column, color, projectID string) (Card, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	pos := 0
@@ -332,6 +374,7 @@ func (b *Board) AddCard(title, description, column, color string) (Card, error) 
 		Column:      column,
 		Position:    pos,
 		Color:       color,
+		ProjectID:   projectID,
 	}
 	b.cards = append(b.cards, c)
 	if err := b.save(); err != nil {
@@ -350,10 +393,14 @@ type CardUpdate struct {
 	Column      *string `json:"column,omitempty"`
 	Position    *int    `json:"position,omitempty"`
 	Color       *string `json:"color,omitempty"`
+	ProjectID   *string `json:"projectId,omitempty"`
 }
 
 // ErrCardNotFound is returned when a card ID doesn't exist on the board.
 var ErrCardNotFound = errors.New("card not found")
+
+// ErrAttachmentNotFound is returned when an attachment ID doesn't exist on a card.
+var ErrAttachmentNotFound = errors.New("attachment not found")
 
 // ErrColumnNotFound is returned when a column ID doesn't exist on the board.
 var ErrColumnNotFound = errors.New("column not found")
@@ -382,6 +429,9 @@ func (b *Board) UpdateCard(id string, u CardUpdate) (Card, error) {
 	}
 	if u.Color != nil {
 		b.cards[idx].Color = *u.Color
+	}
+	if u.ProjectID != nil {
+		b.cards[idx].ProjectID = *u.ProjectID
 	}
 	if u.Column != nil || u.Position != nil {
 		targetColumn := b.cards[idx].Column
@@ -480,6 +530,145 @@ func (b *Board) DeleteCard(id string) error {
 		return b.save()
 	}
 	return ErrCardNotFound
+}
+
+// AddAttachment writes data to disk and appends attachment metadata to the card.
+func (b *Board) AddAttachment(cardID, attachDir, filename, mimeType string, data []byte) (Attachment, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	idx := -1
+	for i := range b.cards {
+		if b.cards[i].ID == cardID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return Attachment{}, ErrCardNotFound
+	}
+	a := Attachment{
+		ID:       newID(),
+		Filename: sanitizeFilename(filename),
+		MimeType: mimeType,
+		Size:     int64(len(data)),
+	}
+	dir := filepath.Join(attachDir, cardID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return Attachment{}, fmt.Errorf("mkdir attachments: %w", err)
+	}
+	filePath := filepath.Join(dir, a.ID)
+	if err := os.WriteFile(filePath, data, 0o644); err != nil {
+		return Attachment{}, fmt.Errorf("write attachment: %w", err)
+	}
+	b.cards[idx].Attachments = append(b.cards[idx].Attachments, a)
+	if err := b.save(); err != nil {
+		b.cards[idx].Attachments = b.cards[idx].Attachments[:len(b.cards[idx].Attachments)-1]
+		_ = os.Remove(filePath)
+		return Attachment{}, err
+	}
+	return a, nil
+}
+
+// GetAttachmentInfo returns the Attachment metadata for (cardID, attachmentID).
+func (b *Board) GetAttachmentInfo(cardID, attachmentID string) (Attachment, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i := range b.cards {
+		if b.cards[i].ID != cardID {
+			continue
+		}
+		for _, a := range b.cards[i].Attachments {
+			if a.ID == attachmentID {
+				return a, nil
+			}
+		}
+		return Attachment{}, ErrAttachmentNotFound
+	}
+	return Attachment{}, ErrCardNotFound
+}
+
+// DeleteAttachment removes attachment metadata from the card and deletes the file.
+func (b *Board) DeleteAttachment(cardID, attachmentID, attachDir string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i := range b.cards {
+		if b.cards[i].ID != cardID {
+			continue
+		}
+		atts := b.cards[i].Attachments
+		for j, a := range atts {
+			if a.ID != attachmentID {
+				continue
+			}
+			b.cards[i].Attachments = append(atts[:j:j], atts[j+1:]...)
+			if err := b.save(); err != nil {
+				b.cards[i].Attachments = atts // restore original slice
+				return err
+			}
+			_ = os.Remove(filepath.Join(attachDir, cardID, attachmentID))
+			return nil
+		}
+		return ErrAttachmentNotFound
+	}
+	return ErrCardNotFound
+}
+
+// sanitizeFilename strips path components and control characters, truncates to 255 bytes.
+func sanitizeFilename(name string) string {
+	name = filepath.Base(name)
+	runes := []rune(name)
+	for i, r := range runes {
+		if r == '/' || r == '\\' || r < 32 {
+			runes[i] = '_'
+		}
+	}
+	s := string(runes)
+	if s == "" || s == "." || s == ".." {
+		return "file"
+	}
+	if len(s) > 255 {
+		s = s[:255]
+	}
+	return s
+}
+
+// ErrProjectNotFound is returned when a project ID doesn't exist.
+var ErrProjectNotFound = errors.New("project not found")
+
+// ListProjects returns a copy of all projects.
+func (b *Board) ListProjects() []Project {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]Project, len(b.projects))
+	copy(out, b.projects)
+	return out
+}
+
+// AddProject creates a project and persists.
+func (b *Board) AddProject(name string) (Project, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	p := Project{ID: newID(), Name: name}
+	b.projects = append(b.projects, p)
+	if err := b.save(); err != nil {
+		b.projects = b.projects[:len(b.projects)-1]
+		return Project{}, err
+	}
+	return p, nil
+}
+
+// DeleteProject removes a project by ID and persists.
+func (b *Board) DeleteProject(id string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i := range b.projects {
+		if b.projects[i].ID != id {
+			continue
+		}
+		b.projects = append(b.projects[:i], b.projects[i+1:]...)
+		return b.save()
+	}
+	return ErrProjectNotFound
 }
 
 // newID returns an unguessable 16-hex-char ID.

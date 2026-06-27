@@ -1,2 +1,4 @@
-# binary artifact (anchored so subpackages aren't matched)
+# binary artifacts
 /kanban
+/kanban_new
+/server
