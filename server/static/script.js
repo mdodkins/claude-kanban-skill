@@ -3,13 +3,15 @@
 // (with an insertion indicator) on both desktop and touch via the Pointer
 // Events API, and a modal for create / edit / delete.
 
-const COLUMNS = [
-  { id: 'to-do',       label: 'To Do' },
-  { id: 'blocked',     label: 'Blocked' },
-  { id: 'in-progress', label: 'In Progress' },
-  { id: 'in-review',   label: 'In Review' },
-  { id: 'done',        label: 'Done' },
-];
+// The ordered column list ([{id, label}, ...]) is owned by the server and
+// loaded on each reload. Columns can be added, renamed, and deleted at runtime.
+let columns = [];
+function findColumn(id) {
+  return columns.find(c => c.id === id);
+}
+// How many palette slots exist in CSS (--col-0 .. --col-N). Column headers
+// cycle through these by position, so any column (including new ones) is hued.
+const COLUMN_PALETTE = 7;
 
 const boardEl = document.querySelector('.board');
 const modal     = document.getElementById('card-modal');
@@ -23,18 +25,6 @@ const cancelBtn = document.getElementById('card-cancel');
 const addBtn    = document.getElementById('add-card');
 
 let editingId = null; // null while creating, card.id while editing
-
-// Column-label overrides (id -> custom label), loaded from the server. The
-// COLUMNS array above is the source of column ids + order + default labels;
-// anything here replaces the default label for that column.
-let columnLabels = {};
-function columnLabel(col) {
-  return columnLabels[col.id] || col.label;
-}
-function defaultLabel(colId) {
-  const c = COLUMNS.find(x => x.id === colId);
-  return c ? c.label : colId;
-}
 
 // ===== API =====
 
@@ -70,7 +60,16 @@ async function apiColumns() {
   if (!res.ok) throw new Error('columns failed');
   return res.json();
 }
-async function apiSetColumn(id, label) {
+async function apiAddColumn(label) {
+  const res = await fetch('api/columns', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok) throw new Error('add column failed: ' + res.status);
+  return res.json();
+}
+async function apiRenameColumn(id, label) {
   const res = await fetch('api/columns/' + encodeURIComponent(id), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -78,6 +77,10 @@ async function apiSetColumn(id, label) {
   });
   if (!res.ok) throw new Error('rename failed: ' + res.status);
   return res.json();
+}
+async function apiDeleteColumn(id) {
+  const res = await fetch('api/columns/' + encodeURIComponent(id), { method: 'DELETE' });
+  if (!res.ok) throw new Error('delete column failed: ' + res.status);
 }
 
 // ===== Drag-and-drop helpers =====
@@ -370,23 +373,23 @@ function render(cards) {
   });
 
   boardEl.innerHTML = '';
-  const byCol = Object.fromEntries(COLUMNS.map(c => [c.id, []]));
+  const byCol = Object.fromEntries(columns.map(c => [c.id, []]));
   for (const card of cards) {
     if (!byCol[card.column]) byCol[card.column] = [];
     byCol[card.column].push(card);
   }
-  for (const col of COLUMNS) {
+  columns.forEach((col, i) => {
     const colCards = (byCol[col.id] || []).sort((a, b) => a.position - b.position);
-    const colEl = renderColumn(col, colCards);
+    const colEl = renderColumn(col, colCards, i);
     boardEl.appendChild(colEl);
     if (prevColScroll[col.id] !== undefined) {
       colEl.querySelector('.column-body').scrollTop = prevColScroll[col.id];
     }
-  }
+  });
   boardEl.scrollLeft = prevScrollLeft;
 }
 
-function renderColumn(col, cards) {
+function renderColumn(col, cards, index) {
   const colEl = document.createElement('section');
   colEl.className = 'column';
   colEl.dataset.id = col.id;
@@ -398,9 +401,12 @@ function renderColumn(col, cards) {
     <div class="column-body"></div>
   `;
   const header = colEl.querySelector('.column-header');
+  // Hue the header from the palette by position so any column (incl. new ones)
+  // gets a colour; falls back to the column tint vars defined in CSS.
+  header.style.background = 'var(--col-' + (index % COLUMN_PALETTE) + ')';
   // Label via textContent (never innerHTML) so a custom name can't inject markup.
-  header.querySelector('.column-title').textContent = columnLabel(col);
-  attachColumnRename(header, col.id);
+  header.querySelector('.column-title').textContent = col.label;
+  attachColumnMenu(header, col);
   const body = colEl.querySelector('.column-body');
   // Drop targets are detected dynamically via elementFromPoint during
   // pointermove (see the global drag handlers above), so the body itself
@@ -412,10 +418,11 @@ function renderColumn(col, cards) {
   return colEl;
 }
 
-// Long-press (touch or mouse-hold) or double-click a column header to rename it.
-// The listeners live on the persistent header element; the title span is looked
-// up at edit time so they survive re-renders and edit/cancel cycles.
-function attachColumnRename(headerEl, colId) {
+// Long-press (touch or mouse-hold) or right-click a column header to open its
+// action menu (rename / delete). Double-click is a shortcut straight to rename.
+// Listeners live on the persistent header element; the title span is looked up
+// at edit time so they survive re-renders and edit/cancel cycles.
+function attachColumnMenu(headerEl, col) {
   let timer = null, sx = 0, sy = 0;
   const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
   const editing = () => headerEl.querySelector('input.column-rename');
@@ -424,7 +431,7 @@ function attachColumnRename(headerEl, colId) {
     sx = e.clientX; sy = e.clientY;
     timer = setTimeout(() => {
       timer = null;
-      startColumnRename(headerEl, colId);
+      openColumnMenu(col, headerEl);
     }, LONG_PRESS_MS);
   });
   headerEl.addEventListener('pointermove', e => {
@@ -435,15 +442,19 @@ function attachColumnRename(headerEl, colId) {
   headerEl.addEventListener('pointerup', clear);
   headerEl.addEventListener('pointercancel', clear);
   headerEl.addEventListener('pointerleave', clear);
+  headerEl.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    if (!editing()) openColumnMenu(col, headerEl);
+  });
   headerEl.addEventListener('dblclick', () => {
-    if (!editing()) startColumnRename(headerEl, colId);
+    if (!editing()) startColumnRename(headerEl, col);
   });
 }
 
-function startColumnRename(headerEl, colId) {
+function startColumnRename(headerEl, col) {
   const titleSpan = headerEl.querySelector('.column-title');
   if (!titleSpan) return;
-  const current = columnLabels[colId] || defaultLabel(colId);
+  const current = col.label;
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'column-rename';
@@ -460,8 +471,8 @@ function startColumnRename(headerEl, colId) {
     const label = input.value.trim();
     if (commit && label && label !== current) {
       try {
-        await apiSetColumn(colId, label);
-        columnLabels[colId] = label;
+        await apiRenameColumn(col.id, label);
+        col.label = label; // same object lives in `columns`, so this sticks
       } catch (err) {
         console.error(err);
         alert('Rename failed: ' + err.message);
@@ -469,7 +480,7 @@ function startColumnRename(headerEl, colId) {
     }
     const span = document.createElement('span');
     span.className = 'column-title';
-    span.textContent = columnLabels[colId] || defaultLabel(colId);
+    span.textContent = col.label;
     input.replaceWith(span);
   };
   input.addEventListener('keydown', e => {
@@ -477,6 +488,61 @@ function startColumnRename(headerEl, colId) {
     else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
   });
   input.addEventListener('blur', () => finish(true));
+}
+
+// Open the rename/delete action sheet for a column.
+function openColumnMenu(col, headerEl) {
+  const menu = document.getElementById('column-menu');
+  document.getElementById('column-menu-title').textContent = col.label;
+  const onRename = () => { close(); startColumnRename(headerEl, col); };
+  const onDelete = async () => {
+    close();
+    const n = headerEl.closest('.column').querySelectorAll('.card').length;
+    const msg = n > 0
+      ? 'Delete column "' + col.label + '" and its ' + n + ' card' + (n === 1 ? '' : 's') + '? This cannot be undone.'
+      : 'Delete column "' + col.label + '"?';
+    if (!await confirmBox(msg)) return;
+    try {
+      await apiDeleteColumn(col.id);
+      reload();
+    } catch (err) {
+      console.error(err);
+      alert('Delete failed: ' + err.message);
+    }
+  };
+  function close() {
+    document.getElementById('column-rename').removeEventListener('click', onRename);
+    document.getElementById('column-delete').removeEventListener('click', onDelete);
+    if (menu.open) menu.close();
+  }
+  document.getElementById('column-rename').addEventListener('click', onRename);
+  document.getElementById('column-delete').addEventListener('click', onDelete);
+  document.getElementById('column-menu-cancel').onclick = close;
+  menu.onclose = close;
+  menu.showModal();
+}
+
+// Styled confirmation box. Resolves true if the user confirms, false otherwise.
+function confirmBox(message) {
+  return new Promise(resolve => {
+    const box = document.getElementById('confirm-box');
+    document.getElementById('confirm-message').textContent = message;
+    let settled = false;
+    const done = result => {
+      if (settled) return;
+      settled = true;
+      document.getElementById('confirm-ok').removeEventListener('click', onOk);
+      document.getElementById('confirm-cancel').removeEventListener('click', onCancel);
+      if (box.open) box.close();
+      resolve(result);
+    };
+    const onOk = () => done(true);
+    const onCancel = () => done(false);
+    document.getElementById('confirm-ok').addEventListener('click', onOk);
+    document.getElementById('confirm-cancel').addEventListener('click', onCancel);
+    box.onclose = () => done(false); // Esc / backdrop
+    box.showModal();
+  });
 }
 
 function renderCard(card) {
@@ -547,19 +613,32 @@ function renderCard(card) {
 
 // ===== Modal =====
 
+// Rebuild the modal's column dropdown from the live column list.
+function populateColumnSelect() {
+  colEl.innerHTML = '';
+  for (const col of columns) {
+    const opt = document.createElement('option');
+    opt.value = col.id;
+    opt.textContent = col.label;
+    colEl.appendChild(opt);
+  }
+}
+
 function openModal(card) {
+  populateColumnSelect();
+  const fallbackCol = columns.length ? columns[0].id : '';
   if (card) {
     editingId = card.id;
     titleEl.value = card.title;
     descEl.value = card.description || '';
-    colEl.value = card.column || 'to-do';
+    colEl.value = card.column || fallbackCol;
     colorEl.value = card.color || '';
     delBtn.hidden = false;
   } else {
     editingId = null;
     titleEl.value = '';
     descEl.value = '';
-    colEl.value = 'to-do';
+    colEl.value = fallbackCol;
     colorEl.value = '';
     delBtn.hidden = true;
   }
@@ -607,6 +686,24 @@ delBtn.addEventListener('click', async () => {
 
 addBtn.addEventListener('click', () => openModal(null));
 
+document.getElementById('add-column').addEventListener('click', async () => {
+  try {
+    const col = await apiAddColumn('New Column');
+    await reload();
+    // Jump straight into renaming the fresh column so it can be named at once.
+    const headerEl = boardEl.querySelector('.column[data-id="' +
+      ((window.CSS && CSS.escape) ? CSS.escape(col.id) : col.id) + '"] .column-header');
+    if (headerEl) {
+      const colObj = findColumn(col.id);
+      if (colObj) startColumnRename(headerEl, colObj);
+      headerEl.scrollIntoView({ inline: 'end', block: 'nearest' });
+    }
+  } catch (err) {
+    console.error(err);
+    alert('Add column failed: ' + err.message);
+  }
+});
+
 // ===== Theme toggle =====
 //
 // The initial theme is applied in index.html before first paint, reading
@@ -637,7 +734,7 @@ syncThemeButton();
 async function reload() {
   try {
     const [cards, cols] = await Promise.all([apiList(), apiColumns()]);
-    columnLabels = cols || {};
+    columns = cols || [];
     render(cards);
   } catch (err) {
     console.error(err);

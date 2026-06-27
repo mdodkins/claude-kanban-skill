@@ -15,11 +15,14 @@
   --danger: #b54848;
   --danger-tint: rgba(181,72,72,.08);
   --danger-line: rgba(181,72,72,0.25);
-  --col-todo: #f4ead8;
-  --col-blocked: #f0d5cb;
-  --col-progress: #e9dbef;
-  --col-review: #d8e6e8;
-  --col-done: #d8e8d6;
+  /* Column header palette, cycled by position (see script.js). */
+  --col-0: #f4ead8;
+  --col-1: #f0d5cb;
+  --col-2: #e9dbef;
+  --col-3: #d8e6e8;
+  --col-4: #d8e8d6;
+  --col-5: #efe3f0;
+  --col-6: #fbe9cf;
   --drag-hover: rgba(184, 94, 46, 0.06);
   --indicator-halo: rgba(184, 94, 46, 0.18);
   --backdrop: rgba(31, 28, 25, 0.5);
@@ -42,11 +45,13 @@
   --danger: #d97777;
   --danger-tint: rgba(217,119,119,.10);
   --danger-line: rgba(217,119,119,0.32);
-  --col-todo: #2d2820;
-  --col-blocked: #362720;
-  --col-progress: #2a2230;
-  --col-review: #1f2a2d;
-  --col-done: #1f2a1f;
+  --col-0: #2d2820;
+  --col-1: #362720;
+  --col-2: #2a2230;
+  --col-3: #1f2a2d;
+  --col-4: #1f2a1f;
+  --col-5: #2c2430;
+  --col-6: #322a1c;
   --drag-hover: rgba(217, 120, 66, 0.08);
   --indicator-halo: rgba(217, 120, 66, 0.22);
   --backdrop: rgba(0, 0, 0, 0.6);
@@ -124,7 +129,8 @@ body {
 
 .board {
   display: grid;
-  grid-template-columns: repeat(5, minmax(260px, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(260px, 1fr);
   gap: 1rem;
   padding: 1rem;
   height: calc(100vh - 60px);
@@ -185,11 +191,7 @@ body {
   border-radius: 999px;
   font-weight: 500;
 }
-.column[data-id="to-do"]       .column-header { background: var(--col-todo); }
-.column[data-id="blocked"]     .column-header { background: var(--col-blocked); }
-.column[data-id="in-progress"] .column-header { background: var(--col-progress); }
-.column[data-id="in-review"]   .column-header { background: var(--col-review); }
-.column[data-id="done"]        .column-header { background: var(--col-done); }
+/* Header background is set inline per column from the palette (see script.js). */
 
 .column-body {
   flex: 1;
@@ -326,6 +328,29 @@ body {
   margin-top: 0.25rem;
 }
 .modal-footer .spacer { flex: 1; }
+
+/* Column action sheet + confirmation box */
+#column-menu, #confirm-box { max-width: 380px; }
+.menu-title {
+  margin: 0;
+  padding: 1rem 1.25rem 0.75rem;
+  font-size: 1rem;
+  border-bottom: 1px solid var(--line);
+  word-break: break-word;
+}
+.menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem 1.25rem 1.25rem;
+}
+.menu-actions .btn { width: 100%; }
+#confirm-message {
+  margin: 0;
+  padding: 1.25rem 1.25rem 0.5rem;
+  line-height: 1.4;
+}
+#confirm-box .modal-footer { padding: 0 1.25rem 1.25rem; }
 
 @media (max-width: 900px) {
   .board {

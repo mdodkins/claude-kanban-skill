@@ -25,24 +25,40 @@ type Card struct {
 	Color string `json:"color,omitempty"`
 }
 
+// Column is one board column. Order is the slice order in Board.columns.
+type Column struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// defaultColumns is the column set seeded on a fresh board.
+func defaultColumns() []Column {
+	return []Column{
+		{ID: "to-do", Label: "To Do"},
+		{ID: "blocked", Label: "Blocked"},
+		{ID: "in-progress", Label: "In Progress"},
+		{ID: "in-review", Label: "In Review"},
+		{ID: "done", Label: "Done"},
+	}
+}
+
 // Board owns the in-memory state and the JSON state file.
 // Mutations write through to disk atomically.
 type Board struct {
 	path    string
-	colPath string // sibling file holding column-label overrides
+	colPath string // sibling file holding the column list
 
-	mu        sync.Mutex
-	cards     []Card
-	colLabels map[string]string // column id -> custom label
+	mu      sync.Mutex
+	cards   []Card
+	columns []Column
 }
 
 // NewBoard loads (or creates) the board state at path.
 // A missing file is treated as an empty board.
 func NewBoard(path string) (*Board, error) {
 	b := &Board{
-		path:      path,
-		colPath:   filepath.Join(filepath.Dir(path), "columns.json"),
-		colLabels: map[string]string{},
+		path:    path,
+		colPath: filepath.Join(filepath.Dir(path), "columns.json"),
 	}
 	if err := b.load(); err != nil {
 		return nil, err
@@ -115,34 +131,43 @@ func (b *Board) save() error {
 	return nil
 }
 
-// loadColumns reads the column-label overrides file. Missing = no overrides.
+// loadColumns reads the column list. A missing/empty file seeds defaults.
+// For backward compatibility it also accepts the older format, a JSON object
+// of id -> label overrides, which it folds onto the default set.
 func (b *Board) loadColumns() error {
 	data, err := os.ReadFile(b.colPath)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || (err == nil && len(data) == 0) {
+		b.columns = defaultColumns()
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read columns: %w", err)
 	}
-	if len(data) == 0 {
+	var cols []Column
+	if err := json.Unmarshal(data, &cols); err == nil && cols != nil {
+		b.columns = cols
 		return nil
 	}
+	// Legacy format: { "id": "label", ... } overrides on the defaults.
 	var labels map[string]string
 	if err := json.Unmarshal(data, &labels); err != nil {
 		return fmt.Errorf("parse columns: %w", err)
 	}
-	if labels != nil {
-		b.colLabels = labels
+	b.columns = defaultColumns()
+	for i := range b.columns {
+		if lbl, ok := labels[b.columns[i].ID]; ok {
+			b.columns[i].Label = lbl
+		}
 	}
 	return nil
 }
 
-// saveColumns writes the column-label overrides atomically. Caller holds b.mu.
+// saveColumns writes the column list atomically. Caller holds b.mu.
 func (b *Board) saveColumns() error {
 	if err := os.MkdirAll(filepath.Dir(b.colPath), 0o755); err != nil {
 		return fmt.Errorf("mkdir state dir: %w", err)
 	}
-	data, err := json.MarshalIndent(b.colLabels, "", "  ")
+	data, err := json.MarshalIndent(b.columns, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode columns: %w", err)
 	}
@@ -156,36 +181,80 @@ func (b *Board) saveColumns() error {
 	return nil
 }
 
-// ColumnLabels returns a copy of the column-label overrides (id -> label).
-func (b *Board) ColumnLabels() map[string]string {
+// Columns returns a copy of the ordered column list.
+func (b *Board) Columns() []Column {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	out := make(map[string]string, len(b.colLabels))
-	for k, v := range b.colLabels {
-		out[k] = v
-	}
+	out := make([]Column, len(b.columns))
+	copy(out, b.columns)
 	return out
 }
 
-// SetColumnLabel sets (or, with an empty label, clears) the override for a
-// column id and persists. The column id is client-defined; the server does not
-// validate it against a fixed set.
-func (b *Board) SetColumnLabel(id, label string) error {
+// AddColumn appends a new column with the given label and persists.
+func (b *Board) AddColumn(label string) (Column, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	prev, had := b.colLabels[id]
-	if label == "" {
-		delete(b.colLabels, id)
-	} else {
-		b.colLabels[id] = label
-	}
+	c := Column{ID: newID(), Label: label}
+	b.columns = append(b.columns, c)
 	if err := b.saveColumns(); err != nil {
-		// Roll back so memory and disk stay consistent.
-		if had {
-			b.colLabels[id] = prev
-		} else {
-			delete(b.colLabels, id)
+		b.columns = b.columns[:len(b.columns)-1]
+		return Column{}, err
+	}
+	return c, nil
+}
+
+// RenameColumn sets a column's label. Unknown ids return ErrColumnNotFound.
+func (b *Board) RenameColumn(id, label string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i := range b.columns {
+		if b.columns[i].ID == id {
+			prev := b.columns[i].Label
+			b.columns[i].Label = label
+			if err := b.saveColumns(); err != nil {
+				b.columns[i].Label = prev
+				return err
+			}
+			return nil
 		}
+	}
+	return ErrColumnNotFound
+}
+
+// DeleteColumn removes a column and every card in it (a cascade). Unknown ids
+// return ErrColumnNotFound. Both files are persisted; the cards write happens
+// first so a column never outlives its cards on disk.
+func (b *Board) DeleteColumn(id string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	idx := -1
+	for i := range b.columns {
+		if b.columns[i].ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return ErrColumnNotFound
+	}
+	// Remove the column's cards.
+	keptCards := b.cards[:0:0]
+	for _, c := range b.cards {
+		if c.Column != id {
+			keptCards = append(keptCards, c)
+		}
+	}
+	prevCards := b.cards
+	b.cards = keptCards
+	if err := b.save(); err != nil {
+		b.cards = prevCards
+		return err
+	}
+	// Remove the column.
+	prevCols := b.columns
+	b.columns = append(append([]Column{}, b.columns[:idx]...), b.columns[idx+1:]...)
+	if err := b.saveColumns(); err != nil {
+		b.columns = prevCols
 		return err
 	}
 	return nil
@@ -240,6 +309,9 @@ type CardUpdate struct {
 
 // ErrCardNotFound is returned when a card ID doesn't exist on the board.
 var ErrCardNotFound = errors.New("card not found")
+
+// ErrColumnNotFound is returned when a column ID doesn't exist on the board.
+var ErrColumnNotFound = errors.New("column not found")
 
 // UpdateCard applies a sparse update and persists. Unknown IDs return ErrCardNotFound.
 // When Column or Position is set, the card is moved to that (column, position) slot

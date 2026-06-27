@@ -40,6 +40,7 @@
         <path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5Z"/>
       </svg>
     </button>
+    <button id="add-column" class="btn">Add column</button>
     <button id="add-card" class="btn primary">Add card</button>
   </div>
 </header>
@@ -61,13 +62,8 @@
     </label>
     <label>
       <span>Column</span>
-      <select id="card-column">
-        <option value="to-do">To Do</option>
-        <option value="blocked">Blocked</option>
-        <option value="in-progress">In Progress</option>
-        <option value="in-review">In Review</option>
-        <option value="done">Done</option>
-      </select>
+      <!-- Options are populated from the live column list when the modal opens. -->
+      <select id="card-column"></select>
     </label>
     <label>
       <span>Colour</span>
@@ -89,6 +85,26 @@
       <button type="submit" class="btn primary">Save</button>
     </footer>
   </form>
+</dialog>
+
+<!-- Column action sheet (rename / delete), opened by long-press or right-click. -->
+<dialog id="column-menu" class="modal">
+  <h3 id="column-menu-title" class="menu-title"></h3>
+  <div class="menu-actions">
+    <button type="button" id="column-rename" class="btn">Rename</button>
+    <button type="button" id="column-delete" class="btn danger">Delete column</button>
+    <button type="button" id="column-menu-cancel" class="btn">Cancel</button>
+  </div>
+</dialog>
+
+<!-- Generic confirmation box. -->
+<dialog id="confirm-box" class="modal">
+  <p id="confirm-message"></p>
+  <footer class="modal-footer">
+    <span class="spacer"></span>
+    <button type="button" id="confirm-cancel" class="btn">Cancel</button>
+    <button type="button" id="confirm-ok" class="btn danger">Delete</button>
+  </footer>
 </dialog>
 
 <script src="script.js"></script>

@@ -45,12 +45,15 @@ func NewMux(b *Board) http.Handler {
 		}
 	})
 	mux.HandleFunc("/api/columns", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", "GET")
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, http.StatusOK, b.Columns())
+		case http.MethodPost:
+			handleAddColumn(w, r, b)
+		default:
+			w.Header().Set("Allow", "GET, POST")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
 		}
-		writeJSON(w, http.StatusOK, b.ColumnLabels())
 	})
 	mux.HandleFunc("/api/columns/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/columns/")
@@ -58,12 +61,15 @@ func NewMux(b *Board) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		if r.Method != http.MethodPatch {
-			w.Header().Set("Allow", "PATCH")
+		switch r.Method {
+		case http.MethodPatch:
+			handleRenameColumn(w, r, b, id)
+		case http.MethodDelete:
+			handleDeleteColumn(w, r, b, id)
+		default:
+			w.Header().Set("Allow", "PATCH, DELETE")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
 		}
-		handleSetColumn(w, r, b, id)
 	})
 	return mux
 }
@@ -71,28 +77,64 @@ func NewMux(b *Board) http.Handler {
 // columnLabelMaxLen caps a custom column label so the header stays sane.
 const columnLabelMaxLen = 60
 
-func handleSetColumn(w http.ResponseWriter, r *http.Request, b *Board, id string) {
+// decodeColumnLabel reads and validates a {label} body.
+func decodeColumnLabel(w http.ResponseWriter, r *http.Request) (string, bool) {
 	var req struct {
 		Label string `json:"label"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
-		return
+		return "", false
 	}
 	label := strings.TrimSpace(req.Label)
 	if label == "" {
 		http.Error(w, "label is required", http.StatusBadRequest)
-		return
+		return "", false
 	}
 	if len(label) > columnLabelMaxLen {
 		http.Error(w, "label too long", http.StatusBadRequest)
+		return "", false
+	}
+	return label, true
+}
+
+func handleAddColumn(w http.ResponseWriter, r *http.Request, b *Board) {
+	label, ok := decodeColumnLabel(w, r)
+	if !ok {
 		return
 	}
-	if err := b.SetColumnLabel(id, label); err != nil {
+	c, err := b.AddColumn(label)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "label": label})
+	writeJSON(w, http.StatusCreated, c)
+}
+
+func handleRenameColumn(w http.ResponseWriter, r *http.Request, b *Board, id string) {
+	label, ok := decodeColumnLabel(w, r)
+	if !ok {
+		return
+	}
+	if err := b.RenameColumn(id, label); errors.Is(err, ErrColumnNotFound) {
+		http.NotFound(w, r)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, Column{ID: id, Label: label})
+}
+
+func handleDeleteColumn(w http.ResponseWriter, r *http.Request, b *Board, id string) {
+	if err := b.DeleteColumn(id); errors.Is(err, ErrColumnNotFound) {
+		http.NotFound(w, r)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type createRequest struct {
