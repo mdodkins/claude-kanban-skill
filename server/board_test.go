@@ -339,3 +339,130 @@ func TestColorRoundTripsThroughAddAndUpdate(t *testing.T) {
 		}
 	}
 }
+
+func TestNewBoardSeedsDefaultColumns(t *testing.T) {
+	b := freshBoard(t)
+	cols := b.Columns()
+	if len(cols) != len(defaultColumns()) {
+		t.Fatalf("expected %d default columns, got %d", len(defaultColumns()), len(cols))
+	}
+	if cols[0].ID != "to-do" {
+		t.Errorf("first default column = %q, want to-do", cols[0].ID)
+	}
+}
+
+func TestAddColumnPersistsAcrossReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	b, err := NewBoard(path)
+	if err != nil {
+		t.Fatalf("NewBoard: %v", err)
+	}
+	c, err := b.AddColumn("Icebox")
+	if err != nil {
+		t.Fatalf("AddColumn: %v", err)
+	}
+	if c.ID == "" || c.Label != "Icebox" {
+		t.Fatalf("unexpected new column: %+v", c)
+	}
+	b2, err := NewBoard(path)
+	if err != nil {
+		t.Fatalf("reload NewBoard: %v", err)
+	}
+	cols := b2.Columns()
+	last := cols[len(cols)-1]
+	if last.ID != c.ID || last.Label != "Icebox" {
+		t.Errorf("added column not persisted/appended: got %+v", last)
+	}
+}
+
+func TestRenameColumn(t *testing.T) {
+	b := freshBoard(t)
+	if err := b.RenameColumn("to-do", "Backlog"); err != nil {
+		t.Fatalf("RenameColumn: %v", err)
+	}
+	if got := b.Columns()[0].Label; got != "Backlog" {
+		t.Errorf("rename not applied: got %q", got)
+	}
+	if err := b.RenameColumn("nope", "x"); err != ErrColumnNotFound {
+		t.Errorf("expected ErrColumnNotFound, got %v", err)
+	}
+}
+
+func TestDeleteColumnCascadesCards(t *testing.T) {
+	b := freshBoard(t)
+	b.AddCard("keep", "", "to-do", "", "")
+	b.AddCard("gone", "", "done", "", "")
+	if err := b.DeleteColumn("done"); err != nil {
+		t.Fatalf("DeleteColumn: %v", err)
+	}
+	for _, c := range b.Columns() {
+		if c.ID == "done" {
+			t.Fatalf("column 'done' still present after delete")
+		}
+	}
+	for _, c := range b.ListCards() {
+		if c.Column == "done" {
+			t.Fatalf("card in deleted column survived: %+v", c)
+		}
+	}
+	if got := len(b.ListCards()); got != 1 {
+		t.Errorf("expected 1 card left, got %d", got)
+	}
+	if err := b.DeleteColumn("nope"); err != ErrColumnNotFound {
+		t.Errorf("expected ErrColumnNotFound, got %v", err)
+	}
+}
+
+func TestLegacyLabelMapMigratesToColumns(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	// Old format: a JSON object of id -> label overrides.
+	if err := os.WriteFile(filepath.Join(dir, "columns.json"), []byte(`{"to-do":"Backlog"}`), 0o644); err != nil {
+		t.Fatalf("seed legacy file: %v", err)
+	}
+	b, err := NewBoard(path)
+	if err != nil {
+		t.Fatalf("NewBoard: %v", err)
+	}
+	cols := b.Columns()
+	if len(cols) != len(defaultColumns()) {
+		t.Fatalf("expected default set after migration, got %d", len(cols))
+	}
+	if cols[0].Label != "Backlog" {
+		t.Errorf("legacy override not folded in: got %q", cols[0].Label)
+	}
+}
+
+func TestMoveColumn(t *testing.T) {
+	b := freshBoard(t)
+	ids := func() []string {
+		var s []string
+		for _, c := range b.Columns() {
+			s = append(s, c.ID)
+		}
+		return s
+	}
+	// defaults: to-do, blocked, in-progress, in-review, done
+	if err := b.MoveColumn("to-do", 2); err != nil {
+		t.Fatalf("MoveColumn right: %v", err)
+	}
+	if got := ids(); got[2] != "to-do" {
+		t.Errorf("after move right, want to-do at index 2, got %v", got)
+	}
+	if err := b.MoveColumn("done", 0); err != nil {
+		t.Fatalf("MoveColumn to front: %v", err)
+	}
+	if got := ids(); got[0] != "done" {
+		t.Errorf("after move to front, want done at 0, got %v", got)
+	}
+	// Clamp: moving past the end lands at the end, no error.
+	if err := b.MoveColumn("done", 99); err != nil {
+		t.Fatalf("MoveColumn clamp: %v", err)
+	}
+	if got := ids(); got[len(got)-1] != "done" {
+		t.Errorf("after clamp, want done last, got %v", got)
+	}
+	if err := b.MoveColumn("nope", 0); err != ErrColumnNotFound {
+		t.Errorf("expected ErrColumnNotFound, got %v", err)
+	}
+}

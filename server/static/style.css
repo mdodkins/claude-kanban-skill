@@ -15,11 +15,14 @@
   --danger: #b54848;
   --danger-tint: rgba(181,72,72,.08);
   --danger-line: rgba(181,72,72,0.25);
-  --col-todo: #f4ead8;
-  --col-blocked: #f0d5cb;
-  --col-progress: #e9dbef;
-  --col-review: #d8e6e8;
-  --col-done: #d8e8d6;
+  /* Column header palette, cycled by position (see script.js). */
+  --col-0: #f4ead8;
+  --col-1: #f0d5cb;
+  --col-2: #e9dbef;
+  --col-3: #d8e6e8;
+  --col-4: #d8e8d6;
+  --col-5: #efe3f0;
+  --col-6: #fbe9cf;
   --drag-hover: rgba(184, 94, 46, 0.06);
   --indicator-halo: rgba(184, 94, 46, 0.18);
   --backdrop: rgba(31, 28, 25, 0.5);
@@ -42,11 +45,13 @@
   --danger: #d97777;
   --danger-tint: rgba(217,119,119,.10);
   --danger-line: rgba(217,119,119,0.32);
-  --col-todo: #2d2820;
-  --col-blocked: #362720;
-  --col-progress: #2a2230;
-  --col-review: #1f2a2d;
-  --col-done: #1f2a1f;
+  --col-0: #2d2820;
+  --col-1: #362720;
+  --col-2: #2a2230;
+  --col-3: #1f2a2d;
+  --col-4: #1f2a1f;
+  --col-5: #2c2430;
+  --col-6: #322a1c;
   --drag-hover: rgba(217, 120, 66, 0.08);
   --indicator-halo: rgba(217, 120, 66, 0.22);
   --backdrop: rgba(0, 0, 0, 0.6);
@@ -91,6 +96,10 @@ body {
   transition: background-color .12s, border-color .12s, color .12s;
 }
 .btn:hover { background: var(--bg-hover); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn:disabled:hover { background: var(--bg-elev); }
+/* Slimmer topbar action buttons. */
+#add-card, #add-column { padding-left: 0.6rem; padding-right: 0.6rem; }
 .btn.primary {
   background: var(--accent);
   color: var(--accent-on);
@@ -124,7 +133,8 @@ body {
 
 .board {
   display: grid;
-  grid-template-columns: repeat(5, minmax(260px, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(260px, 1fr);
   gap: 1rem;
   padding: 1rem;
   height: calc(100vh - 60px);
@@ -151,6 +161,31 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--ink-soft);
+  /* Long-press / double-click to rename; suppress selection + iOS callout. */
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.column-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.column-rename {
+  flex: 1;
+  min-width: 0;
+  margin-right: 0.5rem;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--ink);
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
 }
 .column-header .count {
   font-size: 0.8rem;
@@ -160,11 +195,7 @@ body {
   border-radius: 999px;
   font-weight: 500;
 }
-.column[data-id="to-do"]       .column-header { background: var(--col-todo); }
-.column[data-id="blocked"]     .column-header { background: var(--col-blocked); }
-.column[data-id="in-progress"] .column-header { background: var(--col-progress); }
-.column[data-id="in-review"]   .column-header { background: var(--col-review); }
-.column[data-id="done"]        .column-header { background: var(--col-done); }
+/* Header background is set inline per column from the palette (see script.js). */
 
 .column-body {
   flex: 1;
@@ -196,15 +227,20 @@ body {
   word-break: break-word;
   transition: transform .08s, box-shadow .08s;
   user-select: none;
-  /* Suppress native touch gestures (scroll, pinch) so pointer events
-     reach our drag handlers on mobile. Users scroll the column by
-     touching its padding or header rather than a card. */
+  /* Suppress native touch gestures so every touch reaches our pointer
+     handlers. A touch is then disambiguated in JS: a held finger drags, a
+     moving finger scrolls (we pan the board/column ourselves). See script.js. */
   touch-action: none;
   -webkit-user-drag: none;
 }
 .card:hover { box-shadow: var(--shadow-hover); }
 .card:active { cursor: grabbing; }
 .card.dragging { opacity: 0.4; }
+/* Touch long-press registered: the card is now armed for dragging. */
+.card.drag-armed {
+  box-shadow: var(--shadow-hover);
+  transform: scale(1.04);
+}
 
 /* Ghost that follows the pointer during a drag. */
 .drag-ghost {
@@ -457,6 +493,29 @@ a.attach-name:hover { text-decoration: underline; color: var(--accent); }
   font-size: 0.75rem;
   color: var(--ink-soft);
 }
+
+/* Column action sheet + confirmation box */
+#column-menu, #confirm-box { max-width: 380px; }
+.menu-title {
+  margin: 0;
+  padding: 1rem 1.25rem 0.75rem;
+  font-size: 1rem;
+  border-bottom: 1px solid var(--line);
+  word-break: break-word;
+}
+.menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem 1.25rem 1.25rem;
+}
+.menu-actions .btn { width: 100%; }
+#confirm-message {
+  margin: 0;
+  padding: 1.25rem 1.25rem 0.5rem;
+  line-height: 1.4;
+}
+#confirm-box .modal-footer { padding: 0 1.25rem 1.25rem; }
 
 @media (max-width: 900px) {
   .board {
