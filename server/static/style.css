@@ -196,15 +196,20 @@ body {
   word-break: break-word;
   transition: transform .08s, box-shadow .08s;
   user-select: none;
-  /* Suppress native touch gestures (scroll, pinch) so pointer events
-     reach our drag handlers on mobile. Users scroll the column by
-     touching its padding or header rather than a card. */
+  /* Suppress native touch gestures so every touch reaches our pointer
+     handlers. A touch is then disambiguated in JS: a held finger drags, a
+     moving finger scrolls (we pan the board/column ourselves). See script.js. */
   touch-action: none;
   -webkit-user-drag: none;
 }
 .card:hover { box-shadow: var(--shadow-hover); }
 .card:active { cursor: grabbing; }
 .card.dragging { opacity: 0.4; }
+/* Touch long-press registered: the card is now armed for dragging. */
+.card.drag-armed {
+  box-shadow: var(--shadow-hover);
+  transform: scale(1.04);
+}
 
 /* Ghost that follows the pointer during a drag. */
 .drag-ghost {

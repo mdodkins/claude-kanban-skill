@@ -60,13 +60,27 @@ async function apiDelete(id) {
 // because the latter does not fire on touch devices. Pointer events unify
 // mouse, touch, and stylus, so the same code path drives desktop and mobile.
 //
-// Flow: pointerdown on a card primes a drag; once the pointer moves past
-// DRAG_THRESHOLD px we attach a ghost element following the pointer, find
-// the column body under it via elementFromPoint, and show an insertion
+// Flow (mouse/pen): pointerdown on a card primes a drag; once the pointer
+// moves past DRAG_THRESHOLD px we attach a ghost element following the pointer,
+// find the column body under it via elementFromPoint, and show an insertion
 // indicator. pointerup either commits the move (PATCH column+position) or,
 // if the threshold was never crossed, lets the click handler open the modal.
+//
+// Flow (touch): cards have touch-action:none, so the browser hands us every
+// touch gesture. A touch is ambiguous — it could be a scroll or a drag — so we
+// disambiguate by intent: a drag only begins after the finger is held still for
+// LONG_PRESS_MS. Any significant move before that timer fires is treated as a
+// scroll and we pan the board/column under the finger ourselves. This keeps
+// scrolling fluid even when the finger lands on a card (the common case on a
+// dense board), while still allowing deliberate drags.
 
 const DRAG_THRESHOLD_PX = 6;
+// Touch: hold this long without moving to turn a touch into a drag. Moving
+// before this elapses scrolls instead. Tunable; 2s is deliberately cautious.
+const LONG_PRESS_MS = 2000;
+// Touch: movement beyond this (px) during the long-press window commits to a
+// scroll. A little slop so a resting finger's jitter doesn't cancel the press.
+const TOUCH_SLOP_PX = 8;
 
 let dragState = null;
 
@@ -133,9 +147,13 @@ function positionGhost(ghost, clientX, clientY, offsetX, offsetY) {
   ghost.style.top  = (clientY - offsetY) + 'px';
 }
 
-function beginDrag(e) {
+// Starts the visible drag at the pointer's last-known position. Called from the
+// pointermove handler (mouse/pen, on threshold) and from the long-press timer
+// (touch), so it reads coordinates from dragState rather than an event.
+function beginDrag() {
   const card = dragState.card;
   card.classList.add('dragging');
+  card.classList.remove('drag-armed');
   const r = card.getBoundingClientRect();
   // Use the pointer's offset from the card's top-left so the ghost
   // tracks under the finger/cursor where the drag began.
@@ -143,8 +161,15 @@ function beginDrag(e) {
   dragState.offsetY = dragState.startY - r.top;
   dragState.ghost = makeGhost(card);
   document.body.appendChild(dragState.ghost);
-  positionGhost(dragState.ghost, e.clientX, e.clientY,
+  positionGhost(dragState.ghost, dragState.lastX, dragState.lastY,
                 dragState.offsetX, dragState.offsetY);
+}
+
+function clearLongPress() {
+  if (dragState && dragState.timer) {
+    clearTimeout(dragState.timer);
+    dragState.timer = null;
+  }
 }
 
 function updateDrag(e) {
@@ -183,11 +208,27 @@ async function commitDrag(e) {
 function abortDrag() {
   if (!dragState) return;
   const ds = dragState;
+  clearLongPress();
   dragState = null;
   if (ds.ghost) ds.ghost.remove();
-  if (ds.card) ds.card.classList.remove('dragging');
+  if (ds.card) {
+    ds.card.classList.remove('dragging');
+    ds.card.classList.remove('drag-armed');
+  }
   clearDragOverHighlight();
   clearDropIndicator();
+}
+
+// Pan the column (vertical) and board (horizontal) under the finger by the
+// frame's delta, so a touch-scroll started on a card tracks 1:1. Used only on
+// touch, where cards have touch-action:none and the browser won't scroll for us.
+function touchScrollBy(ds, e) {
+  const dx = e.clientX - ds.lastX;
+  const dy = e.clientY - ds.lastY;
+  ds.lastX = e.clientX;
+  ds.lastY = e.clientY;
+  if (ds.scroller) ds.scroller.scrollTop -= dy;
+  if (ds.board) ds.board.scrollLeft -= dx;
 }
 
 // Global handlers so the drag tracks even when the pointer slides off
@@ -195,29 +236,69 @@ function abortDrag() {
 // through the document keeps the move/up logic in one place.
 document.addEventListener('pointermove', e => {
   if (!dragState || e.pointerId !== dragState.pointerId) return;
-  if (!dragState.started) {
-    const dx = e.clientX - dragState.startX;
-    const dy = e.clientY - dragState.startY;
-    if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
-    dragState.started = true;
-    beginDrag(e);
+  const ds = dragState;
+
+  if (ds.isTouch) {
+    if (ds.phase === 'pending') {
+      const dx = e.clientX - ds.startX;
+      const dy = e.clientY - ds.startY;
+      if (dx * dx + dy * dy < TOUCH_SLOP_PX * TOUCH_SLOP_PX) return;
+      // Moved before the long-press fired: this is a scroll, not a drag.
+      clearLongPress();
+      ds.phase = 'scroll';
+    }
+    if (ds.phase === 'scroll') {
+      touchScrollBy(ds, e);
+      if (e.cancelable) e.preventDefault();
+      return;
+    }
+    if (ds.phase === 'drag') {
+      ds.lastX = e.clientX;
+      ds.lastY = e.clientY;
+      ds.moved = true;
+      if (e.cancelable) e.preventDefault();
+      updateDrag(e);
+    }
+    return;
   }
-  // Stop the page scrolling on touch once a drag is live.
+
+  // Mouse / pen: immediate threshold drag.
+  if (ds.phase !== 'drag') {
+    const dx = e.clientX - ds.startX;
+    const dy = e.clientY - ds.startY;
+    if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
+    ds.lastX = e.clientX;
+    ds.lastY = e.clientY;
+    ds.phase = 'drag';
+    ds.moved = true;
+    beginDrag();
+  }
   if (e.cancelable) e.preventDefault();
   updateDrag(e);
 }, { passive: false });
 
 document.addEventListener('pointerup', e => {
   if (!dragState || e.pointerId !== dragState.pointerId) return;
-  if (!dragState.started) {
-    // Below threshold — treat as a tap; the card's click handler will fire.
-    dragState = null;
+  const ds = dragState;
+  clearLongPress();
+
+  if (ds.phase === 'drag' && ds.moved) {
+    // Tag the card so the synthetic click that follows pointerup is swallowed
+    // by the card's click handler instead of opening the modal.
+    ds.card.dataset.justDragged = '1';
+    commitDrag(e);
     return;
   }
-  // Tag the card so the synthetic click that follows pointerup is swallowed
-  // by the card's click handler instead of opening the modal.
-  dragState.card.dataset.justDragged = '1';
-  commitDrag(e);
+  // pending (a tap), scroll, or a long-press that never moved: no move to
+  // commit. Tear down any ghost; the click handler decides about the modal.
+  if (ds.phase === 'drag') {
+    if (ds.ghost) ds.ghost.remove();
+    ds.card.classList.remove('dragging');
+    clearDragOverHighlight();
+    clearDropIndicator();
+  }
+  ds.card.classList.remove('drag-armed');
+  dragState = null;
 });
 
 document.addEventListener('pointercancel', abortDrag);
@@ -283,14 +364,34 @@ function renderCard(card) {
     // Primary button only for mouse; touch and pen have no button concept
     // so e.button is 0 for them anyway.
     if (e.button !== 0) return;
+    const isTouch = e.pointerType === 'touch';
     dragState = {
       cardId: card.id,
       card: el,
       pointerId: e.pointerId,
+      isTouch,
       startX: e.clientX,
       startY: e.clientY,
-      started: false,
+      lastX: e.clientX,
+      lastY: e.clientY,
+      phase: 'pending',
+      moved: false,
+      timer: null,
+      board: el.closest('.board'),
+      scroller: el.closest('.column-body'),
     };
+    if (isTouch) {
+      // Hold still for LONG_PRESS_MS to turn this touch into a drag. If the
+      // finger moves first, the pointermove handler cancels this and scrolls.
+      dragState.timer = setTimeout(() => {
+        if (!dragState || dragState.phase !== 'pending') return;
+        dragState.phase = 'drag';
+        dragState.moved = false;
+        el.classList.add('drag-armed');
+        if (navigator.vibrate) navigator.vibrate(15);
+        beginDrag();
+      }, LONG_PRESS_MS);
+    }
   });
 
   el.addEventListener('click', e => {
